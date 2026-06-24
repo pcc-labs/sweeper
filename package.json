@@ -1,7 +1,7 @@
 {
   "name": "sweeper",
   "version": "1.0.0",
-  "description": "Autonomous lint-fix loop — run linters, fix issues with parallel sub-agents, retry with escalation, learn from outcomes via tapes.",
+  "description": "Autonomous lint-fix loop — run linters, fix issues with parallel sub-agents, retry with escalation, learn from outcomes via telemetry.",
   "license": "Apache-2.0",
   "keywords": ["pi-package"],
   "extensions": "./extensions",

@@ -18,10 +18,19 @@ func TestDefaults(t *testing.T) {
 	}
 }
 
-func TestDefaultsIncludeTapes(t *testing.T) {
-	cfg := Default()
-	if cfg.NoTapes {
-		t.Error("tapes should be enabled by default")
+func TestDefaultsEnablePaper(t *testing.T) {
+	cfg := FromTOML(NewDefaultTOMLConfig())
+	if !cfg.PaperEnabled {
+		t.Error("paper capture detect+warn should be enabled by default")
+	}
+}
+
+func TestDeprecatedNoTapesDisablesPaper(t *testing.T) {
+	tc := NewDefaultTOMLConfig()
+	tc.Run.NoTapes = true
+	cfg := FromTOML(tc)
+	if cfg.PaperEnabled {
+		t.Error("deprecated no_tapes=true should disable paper detect+warn")
 	}
 }
 

@@ -7,7 +7,6 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/papercomputeco/sweeper/pkg/tapes"
 	"github.com/papercomputeco/sweeper/pkg/telemetry"
 )
 
@@ -20,32 +19,11 @@ type Insight struct {
 }
 
 type Observer struct {
-	dir          string
-	tapesReader  *tapes.Reader
-	tapesEnabled bool
+	dir string
 }
 
-type ObserverOption func(*Observer)
-
-func WithTapesReader(r *tapes.Reader) ObserverOption {
-	return func(o *Observer) {
-		o.tapesReader = r
-		o.tapesEnabled = true
-	}
-}
-
-func WithTapesEnabled(enabled bool) ObserverOption {
-	return func(o *Observer) {
-		o.tapesEnabled = enabled
-	}
-}
-
-func New(dir string, opts ...ObserverOption) *Observer {
-	o := &Observer{dir: dir}
-	for _, opt := range opts {
-		opt(o)
-	}
-	return o
+func New(dir string) *Observer {
+	return &Observer{dir: dir}
 }
 
 func (o *Observer) Analyze() ([]Insight, error) {
@@ -56,44 +34,21 @@ func (o *Observer) Analyze() ([]Insight, error) {
 	if len(events) == 0 {
 		return nil, nil
 	}
-	insights := o.computeInsights(events)
-	if o.tapesEnabled && o.tapesReader != nil {
-		o.enrichWithTapes(insights)
-	}
-	return insights, nil
+	return o.computeInsights(events), nil
 }
 
-const tapesSessionWindow = 50
-
-func (o *Observer) enrichWithTapes(insights []Insight) {
-	hashes, err := o.tapesReader.RecentSessions(tapesSessionWindow)
-	if err != nil {
-		return
-	}
-
-	totalTokens := 0
-	for _, hash := range hashes {
-		session, err := o.tapesReader.GetSession(hash)
-		if err != nil {
-			continue
-		}
-		totalTokens += session.TotalPromptTokens + session.TotalCompletionTokens
-	}
-
-	if totalTokens == 0 {
-		return
-	}
-
-	totalAttempts := 0
-	for _, ins := range insights {
-		totalAttempts += ins.Attempts
-	}
-	if totalAttempts == 0 {
-		return
-	}
-
-	for i := range insights {
-		insights[i].TotalTokens = (totalTokens * insights[i].Attempts) / totalAttempts
+// eventInt coerces a telemetry Data value to int. Values decoded from JSONL
+// arrive as float64; in-memory events may carry int directly.
+func eventInt(v any) int {
+	switch n := v.(type) {
+	case float64:
+		return int(n)
+	case int:
+		return n
+	case int64:
+		return int(n)
+	default:
+		return 0
 	}
 }
 
@@ -243,6 +198,7 @@ func (o *Observer) computeInsights(events []telemetry.Event) []Insight {
 	type stats struct {
 		attempts  int
 		successes int
+		tokens    int
 	}
 	byLinter := make(map[string]*stats)
 	for _, e := range events {
@@ -262,6 +218,9 @@ func (o *Observer) computeInsights(events []telemetry.Event) []Insight {
 		if success, _ := e.Data["success"].(bool); success {
 			s.successes++
 		}
+		// Token usage comes from sweeper's own telemetry (recorded per result
+		// by the provider), not from an external tapes store.
+		s.tokens += eventInt(e.Data["prompt_tokens"]) + eventInt(e.Data["output_tokens"])
 	}
 	insights := make([]Insight, 0, len(byLinter))
 	for linter, s := range byLinter {
@@ -272,6 +231,7 @@ func (o *Observer) computeInsights(events []telemetry.Event) []Insight {
 		insights = append(insights, Insight{
 			Linter: linter, Attempts: s.attempts,
 			Successes: s.successes, SuccessRate: rate,
+			TotalTokens: s.tokens,
 		})
 	}
 	return insights

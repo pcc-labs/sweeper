@@ -28,8 +28,8 @@ Sweeper dispatches parallel AI agents to fix lint issues across your codebase, e
                           │
                     ┌─────┼───────────┐
                     ▼     ▼           ▼
-               streaming telemetry  tapes
-               progress  (.jsonl)  (SQLite)
+               streaming telemetry  paper
+               progress  (.jsonl)  (capture)
 ```
 
 Each sub-agent works on a single file. Results stream back as they complete, giving real-time progress instead of blocking until the entire round finishes.
@@ -221,12 +221,14 @@ This describes the Go CLI and skill-based integrations (Claude Code, opencode). 
 3. **Dispatch**: fan out to N concurrent sub-agents (default 2, max 5, rate-limited)
 4. **Stream**: results arrive in real time as each file completes
 5. **Escalate**: stalled files get retry prompts, then exploration prompts that consider surrounding code
-6. **Record**: outcomes logged to `.sweeper/telemetry/` and tapes captures token usage
+6. **Record**: outcomes (success, strategy, round, tokens) logged to `.sweeper/telemetry/`
 7. **Learn**: `sweeper observe` shows success rates by strategy, round, and linter
 
-## Tapes: The Learning Center
+## Session Capture via Paper
 
-Every sub-agent session is recorded in [tapes](https://github.com/papercomputeco/tapes). This gives you:
+Sweeper's spawned `claude` sub-agents inherit `ANTHROPIC_BASE_URL`, so when [paper](https://github.com/papercomputeco/paper) is running (`paper init`) every session is captured through its proxy — no configuration in sweeper required. Sweeper only *consumes* this wiring: on each run it checks the proxy env and warns if it's missing. It never starts, stops, or vendors the daemon. Disable the check with `--no-paper` or `[paper] enabled = false`.
+
+The learning loop runs on sweeper's own telemetry (`.sweeper/telemetry/*.jsonl`), which records per-fix outcome, strategy, round, and token usage:
 
 - **Token spend per linter**: know what each fix costs
 - **Strategy effectiveness**: standard vs retry vs exploration success rates

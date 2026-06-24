@@ -15,11 +15,14 @@ import (
 	"github.com/papercomputeco/sweeper/pkg/worker"
 )
 
-func TestAgentRunPrintsTapesWarning(t *testing.T) {
+func TestAgentRunPrintsPaperWarning(t *testing.T) {
+	// Paper enabled with no proxy env set: exercises the detect+warn branch.
+	t.Setenv("ANTHROPIC_BASE_URL", "")
 	cfg := config.Config{
 		TargetDir:    t.TempDir(),
 		Concurrency:  1,
 		TelemetryDir: t.TempDir(),
+		PaperEnabled: true,
 	}
 	fakeLinter := func(ctx context.Context, dir string) (linter.ParseResult, error) {
 		return linter.ParseResult{}, nil
@@ -31,12 +34,31 @@ func TestAgentRunPrintsTapesWarning(t *testing.T) {
 	}
 }
 
-func TestAgentRunSkipsTapesWithFlag(t *testing.T) {
+func TestAgentRunPaperCapturing(t *testing.T) {
+	// Paper enabled with the proxy env present: exercises the "capturing" branch.
+	t.Setenv("ANTHROPIC_BASE_URL", "http://localhost:5000")
 	cfg := config.Config{
 		TargetDir:    t.TempDir(),
 		Concurrency:  1,
 		TelemetryDir: t.TempDir(),
-		NoTapes:      true,
+		PaperEnabled: true,
+	}
+	fakeLinter := func(ctx context.Context, dir string) (linter.ParseResult, error) {
+		return linter.ParseResult{}, nil
+	}
+	a := New(cfg, WithLinterFunc(fakeLinter))
+	_, err := a.Run(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestAgentRunSkipsPaperWhenDisabled(t *testing.T) {
+	cfg := config.Config{
+		TargetDir:    t.TempDir(),
+		Concurrency:  1,
+		TelemetryDir: t.TempDir(),
+		PaperEnabled: false,
 	}
 	fakeLinter := func(ctx context.Context, dir string) (linter.ParseResult, error) {
 		return linter.ParseResult{}, nil
@@ -138,7 +160,6 @@ func TestAgentRunLinterError(t *testing.T) {
 		TargetDir:    t.TempDir(),
 		Concurrency:  1,
 		TelemetryDir: t.TempDir(),
-		NoTapes:      true,
 	}
 	fakeLinter := func(ctx context.Context, dir string) (linter.ParseResult, error) {
 		return linter.ParseResult{}, errors.New("linter broke")
@@ -155,7 +176,6 @@ func TestAgentRunParsedWithFailure(t *testing.T) {
 		TargetDir:    t.TempDir(),
 		Concurrency:  1,
 		TelemetryDir: t.TempDir(),
-		NoTapes:      true,
 	}
 	fakeLinter := func(ctx context.Context, dir string) (linter.ParseResult, error) {
 		return linter.ParseResult{
@@ -183,7 +203,6 @@ func TestAgentRunRawWithFailure(t *testing.T) {
 		TargetDir:    t.TempDir(),
 		Concurrency:  1,
 		TelemetryDir: t.TempDir(),
-		NoTapes:      true,
 	}
 	fakeLinter := func(ctx context.Context, dir string) (linter.ParseResult, error) {
 		return linter.ParseResult{
@@ -210,7 +229,6 @@ func TestAgentRunParsedDryRun(t *testing.T) {
 		Concurrency:  1,
 		TelemetryDir: t.TempDir(),
 		DryRun:       true,
-		NoTapes:      true,
 	}
 	fakeLinter := func(ctx context.Context, dir string) (linter.ParseResult, error) {
 		return linter.ParseResult{
@@ -240,32 +258,6 @@ func TestDefaultLinterFunc(t *testing.T) {
 	_, _ = defaultLinterFunc(context.Background(), t.TempDir())
 }
 
-func TestAgentRunTapesAvailable(t *testing.T) {
-	// Create a fake tapes DB in the target dir to cover the "Tapes: using" branch.
-	dir := t.TempDir()
-	tapesDir := dir + "/.tapes"
-	if err := os.MkdirAll(tapesDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(tapesDir+"/tapes.db", []byte("fake"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	cfg := config.Config{
-		TargetDir:    dir,
-		Concurrency:  1,
-		TelemetryDir: t.TempDir(),
-	}
-	fakeLinter := func(ctx context.Context, dir string) (linter.ParseResult, error) {
-		return linter.ParseResult{}, nil
-	}
-	a := New(cfg, WithLinterFunc(fakeLinter))
-	_, err := a.Run(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
-}
-
 func TestAgentRunMultiRoundAllFixed(t *testing.T) {
 	callCount := 0
 	issues := []linter.Issue{
@@ -286,7 +278,6 @@ func TestAgentRunMultiRoundAllFixed(t *testing.T) {
 		TargetDir:      t.TempDir(),
 		Concurrency:    1,
 		TelemetryDir:   t.TempDir(),
-		NoTapes:        true,
 		MaxRounds:      3,
 		StaleThreshold: 2,
 	}
@@ -334,7 +325,6 @@ func TestAgentRunMultiRoundWithRetry(t *testing.T) {
 		TargetDir:      t.TempDir(),
 		Concurrency:    1,
 		TelemetryDir:   t.TempDir(),
-		NoTapes:        true,
 		MaxRounds:      3,
 		StaleThreshold: 2,
 	}
@@ -372,7 +362,6 @@ func TestAgentRunStagnationTriggersExploration(t *testing.T) {
 		TargetDir:      t.TempDir(),
 		Concurrency:    1,
 		TelemetryDir:   t.TempDir(),
-		NoTapes:        true,
 		MaxRounds:      5,
 		StaleThreshold: 2,
 	}
@@ -409,7 +398,6 @@ func TestAgentRunReLintError(t *testing.T) {
 		TargetDir:      t.TempDir(),
 		Concurrency:    1,
 		TelemetryDir:   t.TempDir(),
-		NoTapes:        true,
 		MaxRounds:      3,
 		StaleThreshold: 2,
 	}
@@ -444,7 +432,6 @@ func TestAgentRunBackoffRespectsContextCancel(t *testing.T) {
 		TargetDir:      t.TempDir(),
 		Concurrency:    1,
 		TelemetryDir:   t.TempDir(),
-		NoTapes:        true,
 		MaxRounds:      3,
 		StaleThreshold: 2,
 	}
@@ -474,7 +461,6 @@ func TestAgentRunBackoffCapsAt60s(t *testing.T) {
 		TargetDir:      t.TempDir(),
 		Concurrency:    1,
 		TelemetryDir:   t.TempDir(),
-		NoTapes:        true,
 		MaxRounds:      6,
 		StaleThreshold: 99, // prevent exploration so all rounds run
 	}
@@ -497,7 +483,6 @@ func TestAgentRunDryRunSkipsLoop(t *testing.T) {
 		TargetDir:      t.TempDir(),
 		Concurrency:    1,
 		TelemetryDir:   t.TempDir(),
-		NoTapes:        true,
 		DryRun:         true,
 		MaxRounds:      3,
 		StaleThreshold: 2,
@@ -579,7 +564,6 @@ func TestAgentRunReLintErrorWithFailedExecutor(t *testing.T) {
 		TargetDir:      t.TempDir(),
 		Concurrency:    1,
 		TelemetryDir:   t.TempDir(),
-		NoTapes:        true,
 		MaxRounds:      3,
 		StaleThreshold: 2,
 	}
@@ -617,7 +601,6 @@ func TestAgentRunMoreIssuesAfterFix(t *testing.T) {
 		TargetDir:      t.TempDir(),
 		Concurrency:    1,
 		TelemetryDir:   t.TempDir(),
-		NoTapes:        true,
 		MaxRounds:      2,
 		StaleThreshold: 2,
 	}
@@ -647,7 +630,6 @@ func TestAgentRunMaxRoundsZero(t *testing.T) {
 		TargetDir:    t.TempDir(),
 		Concurrency:  1,
 		TelemetryDir: t.TempDir(),
-		NoTapes:      true,
 		MaxRounds:    0,
 	}
 	a := New(cfg, WithLinterFunc(fakeLinter), WithExecutor(fakeExecutor))
@@ -683,7 +665,6 @@ func TestAgentWithVMOption(t *testing.T) {
 		TargetDir:    t.TempDir(),
 		Concurrency:  1,
 		TelemetryDir: t.TempDir(),
-		NoTapes:      true,
 		VM:           true,
 	}
 	fakeLinter := func(ctx context.Context, dir string) (linter.ParseResult, error) {
@@ -711,7 +692,6 @@ func TestAgentWithVMDryRun(t *testing.T) {
 		TargetDir:    t.TempDir(),
 		Concurrency:  1,
 		TelemetryDir: t.TempDir(),
-		NoTapes:      true,
 		VM:           true,
 		DryRun:       true,
 	}
@@ -743,7 +723,6 @@ func TestAgentWithVMContextCancel(t *testing.T) {
 		TargetDir:    t.TempDir(),
 		Concurrency:  1,
 		TelemetryDir: t.TempDir(),
-		NoTapes:      true,
 		VM:           true,
 	}
 	ctx, cancel := context.WithCancel(context.Background())
@@ -763,7 +742,6 @@ func TestAgentRunWithCustomLintCommand(t *testing.T) {
 		TargetDir:    t.TempDir(),
 		Concurrency:  1,
 		TelemetryDir: t.TempDir(),
-		NoTapes:      true,
 		LintCommand:  []string{"eslint", "--fix", "."},
 	}
 	fakeLinter := func(ctx context.Context, dir string) (linter.ParseResult, error) {
@@ -788,7 +766,6 @@ func TestAgentRunSessionDocError(t *testing.T) {
 		TargetDir:    tmp,
 		Concurrency:  1,
 		TelemetryDir: t.TempDir(),
-		NoTapes:      true,
 	}
 	fakeLinter := func(ctx context.Context, dir string) (linter.ParseResult, error) {
 		return linter.ParseResult{}, nil
@@ -947,7 +924,6 @@ func TestWithPublisherOption(t *testing.T) {
 		TargetDir:    t.TempDir(),
 		Concurrency:  1,
 		TelemetryDir: t.TempDir(),
-		NoTapes:      true,
 	}
 	fakeLinter := func(ctx context.Context, dir string) (linter.ParseResult, error) {
 		return linter.ParseResult{}, nil

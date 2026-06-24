@@ -1,11 +1,11 @@
 ---
 name: sweeper
-description: Agent-powered code maintenance with parallel sub-agents, VM isolation, and tapes-driven learning. Orchestrates sweeper CLI to dispatch concurrent agents for lint fixes, test repairs, migrations, refactoring, and any measurable code improvement target.
+description: Agent-powered code maintenance with parallel sub-agents, VM isolation, and telemetry-driven learning. Orchestrates sweeper CLI to dispatch concurrent agents for lint fixes, test repairs, migrations, refactoring, and any measurable code improvement target.
 ---
 
 # Sweeper - Agent-Powered Code Maintenance
 
-You orchestrate the **sweeper** CLI to run parallel AI sub-agents against a codebase with optional VM isolation and swappable providers (Claude, Codex, Ollama/local models). While lint fixing is the default, the same loop handles test repairs, dependency migrations, refactoring, and any task where you can run a command, parse issues, and dispatch agents to fix them. Tapes records every sub-agent session, enabling you to learn from past runs and optimize token spend.
+You orchestrate the **sweeper** CLI to run parallel AI sub-agents against a codebase with optional VM isolation and swappable providers (Claude, Codex, Ollama/local models). While lint fixing is the default, the same loop handles test repairs, dependency migrations, refactoring, and any task where you can run a command, parse issues, and dispatch agents to fix them. Sweeper's JSONL telemetry records every fix attempt (outcome, strategy, round, tokens), enabling you to learn from past runs and optimize token spend. When the external paper proxy is running, sub-agent sessions are also captured out-of-band — no sweeper configuration required.
 
 ## Prerequisites
 
@@ -45,7 +45,7 @@ Then create a session document:
 - Round: 0
 - Issues found: (pending first run)
 - Issues fixed: 0
-- Token spend: (pending — check tapes after first run)
+- Token spend: (pending — run `sweeper observe` after first run)
 
 ## What's Been Tried
 (Updated after each round)
@@ -58,7 +58,7 @@ Commit on a new branch: `sweeper/<goal>-<date>`
 
 ## Running Sweeper
 
-Use the CLI to orchestrate the full loop. The CLI handles linting, parsing, parallel sub-agent dispatch, retry escalation, telemetry, and tapes integration.
+Use the CLI to orchestrate the full loop. The CLI handles linting, parsing, parallel sub-agent dispatch, retry escalation, and telemetry. Session capture is handled out-of-band by the external paper proxy when it's running.
 
 ### Basic runs
 
@@ -122,15 +122,15 @@ Each `sweeper run` executes this loop:
    - **Consecutive stale >= threshold**: `exploration` — refactor surrounding code
    - **Stagnant after exploration**: file dropped
 4. **Dispatch**: Parallel sub-agents fix each file (bounded by `--concurrency`)
-5. **Record**: Each outcome logged to `.sweeper/telemetry/` JSONL + tapes captures token usage
+5. **Record**: Each outcome (success, strategy, round, `prompt_tokens`/`output_tokens`) logged to `.sweeper/telemetry/` JSONL
 6. **Re-lint**: Verify fixes, filter retryable issues
 7. **Repeat or stop**: Continue if issues remain and rounds left
 
-## Tapes — The Learning Center
+## Telemetry — The Learning Center
 
-Tapes is the backbone for self-learning. Every sub-agent session is recorded in tapes, giving you token usage, session transcripts, and outcome data.
+Sweeper's JSONL telemetry is the backbone for self-learning. Every fix attempt is recorded with its outcome and token usage.
 
-### Check tapes status
+### Check learned patterns
 
 ```bash
 sweeper observe
@@ -140,9 +140,9 @@ This shows:
 - **Success rate per linter** — which linters sweeper handles best
 - **Round effectiveness** — which retry rounds contribute most fixes
 - **Strategy effectiveness** — standard vs retry vs exploration success rates
-- **Token usage per linter** — how much each linter costs to fix (from tapes)
+- **Token usage per linter** — how much each linter costs to fix (aggregated from telemetry)
 
-### Use tapes data to make decisions
+### Use telemetry data to make decisions
 
 Before starting a sweep, check historical performance:
 
@@ -158,7 +158,7 @@ Use the insights to tune your run:
 
 ### Token budget tracking
 
-After each run, update `sweeper.md` with token spend from tapes:
+After each run, update `sweeper.md` with token spend from `sweeper observe`:
 
 ```
 ## Token Budget
@@ -167,7 +167,7 @@ After each run, update `sweeper.md` with token spend from tapes:
 - Trend: improving — retry prompts getting more targeted
 ```
 
-The goal is to fix more issues with fewer tokens over time. Tapes makes this measurable.
+The goal is to fix more issues with fewer tokens over time. Telemetry makes this measurable.
 
 ## Resume
 
@@ -175,7 +175,7 @@ If `sweeper.md` already exists when you start:
 1. Read it to understand what's been tried and token spend so far
 2. Run `sweeper observe` to check recent success patterns
 3. Read git log for recent sweeper commits
-4. Choose `--max-rounds` and `--concurrency` based on tapes insights
+4. Choose `--max-rounds` and `--concurrency` based on `sweeper observe` insights
 5. Continue from where you left off
 
 ## Updating sweeper.md

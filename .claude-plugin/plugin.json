@@ -1,7 +1,7 @@
 {
   "name": "sweeper",
   "version": "0.1.0",
-  "description": "Agent-powered code maintenance with parallel sub-agents, VM isolation, and tapes-driven learning",
+  "description": "Agent-powered code maintenance with parallel sub-agents, VM isolation, and telemetry-driven learning",
   "author": { "name": "papercomputeco" },
   "repository": "https://github.com/papercomputeco/sweeper",
   "license": "Apache-2.0",

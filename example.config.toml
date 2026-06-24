@@ -16,13 +16,18 @@ rate_limit = "2s"
 max_rounds = 1
 stale_threshold = 2
 # dry_run = false
-# no_tapes = false
 
 [provider]
 name = "claude"
 # model = ""
 # api_base = ""
 # allowed_tools = ["Read", "Write", "Edit", "Glob", "Grep"]
+
+[paper]
+# Session capture flows through the external paper proxy: spawned agents inherit
+# ANTHROPIC_BASE_URL (set by `paper init`). `enabled` only toggles whether sweeper
+# checks for that wiring and warns when it's missing — it never starts paperd.
+enabled = true
 
 [telemetry]
 # backend: "jsonl" (default, always active) or "confluent" (adds Kafka fan-out)

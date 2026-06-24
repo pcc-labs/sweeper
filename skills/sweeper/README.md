@@ -1,6 +1,6 @@
 # Sweeper Skill
 
-Autonomous lint-fix agent skill powered by the sweeper CLI. Orchestrates parallel sub-agents with swappable AI providers (Claude, Codex, Ollama), VM isolation, and tapes-driven learning.
+Autonomous lint-fix agent skill powered by the sweeper CLI. Orchestrates parallel sub-agents with swappable AI providers (Claude, Codex, Ollama), VM isolation, and telemetry-driven learning.
 
 ## Install in Claude Code
 
@@ -38,12 +38,13 @@ cd /path/to/sweeper && go build -o sweeper .
 export PATH="/path/to/sweeper:$PATH"
 ```
 
-For tapes integration (token tracking):
+For session capture through paper (optional):
 
 ```bash
-go install github.com/papercomputeco/tapes/cli/tapes@latest
-tapes init
+paper init
 ```
+
+This starts the external paper proxy and sets `ANTHROPIC_BASE_URL`; spawned sub-agents inherit it and are captured automatically. Sweeper requires no configuration for this — it only warns when the proxy env is missing.
 
 ## What It Does
 
@@ -52,15 +53,15 @@ tapes init
 3. Retries with escalating strategies (standard -> retry -> exploration)
 4. Swappable providers: `--provider claude` (default), `--provider codex`, `--provider ollama --model <name>`
 5. Optional VM isolation via stereOS for security and resource isolation (CLI providers only)
-6. Tapes records every sub-agent session for token tracking and self-learning
+6. Paper (when running) captures every sub-agent session out-of-band via the inherited proxy env
 7. `sweeper observe` shows success rates, strategy effectiveness, and token spend
 8. Session state tracked in `sweeper.md` for resume across restarts
 
-## Tapes — The Learning Center
+## Telemetry — The Learning Center
 
-Tapes is the self-learning backbone. Every sub-agent session is recorded, giving:
+Sweeper's own JSONL telemetry is the self-learning backbone. Every fix attempt is recorded, giving:
 
-- Token usage per linter and strategy
+- Token usage per linter and strategy (from per-attempt `prompt_tokens`/`output_tokens`)
 - Success rate trends over time
 - Round/strategy effectiveness to optimize future runs
 - Token budget tracking to reduce spend over time
