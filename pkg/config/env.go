@@ -36,11 +36,6 @@ func applyEnvOverrides(tc *TOMLConfig) {
 	if v := os.Getenv("SWEEPER_PROVIDER_API_BASE"); v != "" {
 		tc.Provider.APIBase = v
 	}
-	if v := os.Getenv("SWEEPER_PAPER_ENABLED"); v != "" {
-		if b, err := strconv.ParseBool(v); err == nil {
-			tc.Paper.Enabled = &b
-		}
-	}
 if v := os.Getenv("SWEEPER_TELEMETRY_BACKEND"); v != "" {
 		tc.Telemetry.Backend = v
 	}

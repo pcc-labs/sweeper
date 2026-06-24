@@ -34,7 +34,6 @@ Runs the full lint-fix-retry loop:
 - `--target, -t <dir>` - Directory to lint and fix (default: `.`)
 - `--concurrency, -c <n>` - Max parallel sub-agents (default: `3`)
 - `--dry-run` - Show what would be fixed without running agents
-- `--no-paper` - Disable the paper capture detect+warn
 - `--max-rounds <n>` - Maximum retry rounds (default: `1` = single pass)
 - `--stale-threshold <n>` - Consecutive non-improving rounds before exploration mode (default: `2`)
 - `--vm` - Boot ephemeral stereOS VM, teardown on exit
@@ -228,5 +227,4 @@ Use `sweeper observe` to analyze this data. It shows success rates per linter an
 - **"cannot use both piped input and -- command"** - Choose one input method: pipe or `--`
 - **"No lint issues found"** - The target codebase is clean; nothing to fix
 - **Custom command produces no parseable output** - Sweeper falls back to raw mode; the agent will analyze the full output
-- **Paper warning** (`paper CLI not found`) - Install paper and run `paper init` to capture sessions, or use `--no-paper` to suppress the warning
 - **Tasks failing** - Check the sub-agent output in the telemetry JSONL for error details

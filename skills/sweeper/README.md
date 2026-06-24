@@ -44,7 +44,7 @@ For session capture through paper (optional):
 paper init
 ```
 
-This brings up the paper daemon. Sweeper then launches each claude sub-agent via `paper start claude`, so paper's gateway manages auth and captures the session (no API token is passed). Sweeper requires no configuration for this — it only warns when the `paper` CLI is missing.
+This brings up the paper daemon. Sweeper then launches each claude sub-agent via `paper start claude`, so paper's gateway manages auth and captures the session (no API token is passed). Sweeper requires no configuration for this; if the `paper` CLI isn't installed it falls back to running claude directly (no capture).
 
 ## What It Does
 

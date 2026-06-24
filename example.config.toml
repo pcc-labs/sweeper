@@ -22,13 +22,9 @@ name = "claude"
 # model = ""
 # api_base = ""
 # allowed_tools = ["Read", "Write", "Edit", "Glob", "Grep"]
-
-[paper]
 # When the paper CLI is installed, sweeper launches claude sub-agents via
 # `paper start claude` so paper's gateway manages auth and captures the session
-# (no ANTHROPIC_API_KEY is used). `enabled` only toggles whether sweeper warns
-# when the paper CLI is missing — it never starts paperd.
-enabled = true
+# (no ANTHROPIC_API_KEY is used). No configuration is needed.
 
 [telemetry]
 # backend: "jsonl" (default, always active) or "confluent" (adds Kafka fan-out)

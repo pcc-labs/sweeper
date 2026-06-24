@@ -141,8 +141,6 @@ func TestFromTOMLVMFields(t *testing.T) {
 	tc.Provider.Model = "gpt-4"
 	tc.Provider.APIBase = "https://api.example.com"
 	tc.Run.DryRun = true
-	disabled := false
-	tc.Paper.Enabled = &disabled
 	tc.Run.MaxRounds = 5
 	tc.Run.StaleThreshold = 3
 	cfg := FromTOML(tc)
@@ -164,9 +162,6 @@ func TestFromTOMLVMFields(t *testing.T) {
 	if !cfg.DryRun {
 		t.Error("expected DryRun true")
 	}
-	if cfg.PaperEnabled {
-		t.Error("expected PaperEnabled false when paper.enabled=false")
-	}
 	if cfg.MaxRounds != 5 {
 		t.Errorf("expected MaxRounds 5, got %d", cfg.MaxRounds)
 	}
@@ -184,7 +179,6 @@ func TestApplyEnvOverridesAllFields(t *testing.T) {
 	t.Setenv("SWEEPER_PROVIDER_MODEL", "gpt-4o")
 	t.Setenv("SWEEPER_PROVIDER_API_BASE", "https://api.openai.com")
 	t.Setenv("SWEEPER_PROVIDER_ALLOWED_TOOLS", "Read,Write")
-	t.Setenv("SWEEPER_PAPER_ENABLED", "false")
 	t.Setenv("SWEEPER_TELEMETRY_BACKEND", "confluent")
 	t.Setenv("SWEEPER_TELEMETRY_DIR", "/tmp/tel")
 	t.Setenv("SWEEPER_TELEMETRY_CONFLUENT_BROKERS", "b1:9092,b2:9092")
@@ -216,9 +210,6 @@ func TestApplyEnvOverridesAllFields(t *testing.T) {
 	}
 	if tc.Provider.APIBase != "https://api.openai.com" {
 		t.Errorf("expected api_base, got %s", tc.Provider.APIBase)
-	}
-	if tc.Paper.Enabled == nil || *tc.Paper.Enabled {
-		t.Error("expected paper.enabled false from SWEEPER_PAPER_ENABLED=false")
 	}
 	if tc.Telemetry.Backend != "confluent" {
 		t.Errorf("expected backend confluent, got %s", tc.Telemetry.Backend)

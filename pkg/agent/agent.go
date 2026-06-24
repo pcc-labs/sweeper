@@ -10,7 +10,6 @@ import (
 	"github.com/papercomputeco/sweeper/pkg/config"
 	"github.com/papercomputeco/sweeper/pkg/linter"
 	"github.com/papercomputeco/sweeper/pkg/loop"
-	"github.com/papercomputeco/sweeper/pkg/paper"
 	"github.com/papercomputeco/sweeper/pkg/planner"
 	"github.com/papercomputeco/sweeper/pkg/provider"
 	"github.com/papercomputeco/sweeper/pkg/session"
@@ -100,20 +99,6 @@ func (a *Agent) Run(ctx context.Context) (Summary, error) {
 	defer func() { _ = a.pub.Close() }()
 	if a.vm != nil {
 		defer func() { _ = a.vm.Shutdown() }()
-	}
-
-	// Paper capture works by the spawned `claude` child inheriting
-	// ANTHROPIC_BASE_URL, so the detect+warn only applies to the claude provider.
-	providerName := a.cfg.Provider
-	if providerName == "" {
-		providerName = "claude"
-	}
-	if a.cfg.PaperEnabled && providerName == "claude" {
-		if s := paper.Check(); s.Available {
-			fmt.Printf("Paper: capturing sub-agents via `paper start claude` (%s)\n", s.Path)
-		} else if s.Message != "" {
-			fmt.Printf("Warning: %s\n", s.Message)
-		}
 	}
 
 	lintCmd := "golangci-lint run ./..."

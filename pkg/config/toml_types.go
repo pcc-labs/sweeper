@@ -7,7 +7,6 @@ type TOMLConfig struct {
 	Version   int             `toml:"version"`
 	Run       RunConfig       `toml:"run"`
 	Provider  ProviderConfig  `toml:"provider"`
-	Paper     PaperConfig     `toml:"paper"`
 	Telemetry TelemetryConfig `toml:"telemetry"`
 	VM        VMSectionConfig `toml:"vm"`
 }
@@ -18,20 +17,6 @@ type RunConfig struct {
 	MaxRounds      int    `toml:"max_rounds"`
 	StaleThreshold int    `toml:"stale_threshold"`
 	DryRun         bool   `toml:"dry_run"`
-	// NoTapes is the deprecated predecessor of [paper] enabled. When true it
-	// still disables the paper capture detect+warn, for back-compat.
-	NoTapes bool `toml:"no_tapes"`
-}
-
-// PaperConfig controls the paper capture detect+warn. Capture itself is handled
-// by the external paperd proxy (via ANTHROPIC_BASE_URL); enabling this only
-// toggles whether sweeper checks for and warns about that wiring.
-//
-// Enabled is a pointer so an unset value (nil) can be distinguished from an
-// explicit false: when nil, the deprecated run.no_tapes alias decides; when
-// set, the explicit value wins over the alias.
-type PaperConfig struct {
-	Enabled *bool `toml:"enabled"`
 }
 
 func (r RunConfig) ParseRateLimit() (time.Duration, error) {
@@ -81,8 +66,6 @@ func NewDefaultTOMLConfig() TOMLConfig {
 		Provider: ProviderConfig{
 			Name: "claude",
 		},
-		// Paper.Enabled is left nil (unset): paper detect+warn defaults to on,
-		// resolved in FromTOML, unless the deprecated no_tapes alias disables it.
 		Telemetry: TelemetryConfig{
 			Backend: "jsonl",
 			Dir:     ".sweeper/telemetry",
@@ -97,12 +80,10 @@ var TOMLConfigKeySet = map[string]bool{
 	"run.max_rounds":                      true,
 	"run.stale_threshold":                 true,
 	"run.dry_run":                         true,
-	"run.no_tapes":                        true,
 	"provider.name":                       true,
 	"provider.model":                      true,
 	"provider.api_base":                   true,
 	"provider.allowed_tools":              true,
-	"paper.enabled":                       true,
 	"telemetry.backend":                   true,
 	"telemetry.dir":                       true,
 	"telemetry.confluent.brokers":         true,

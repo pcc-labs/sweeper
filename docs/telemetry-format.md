@@ -83,6 +83,5 @@ Full session transcripts are captured by the external **paper** gateway. When th
 is installed, sweeper launches each `claude` sub-agent via `paper start claude`, so paper
 manages authentication and captures the session — sweeper passes no `ANTHROPIC_API_KEY` and
 strips the Anthropic auth/proxy vars from the sub-agent's environment. Sweeper neither reads
-nor writes the paper/tapes API; it only checks that the `paper` CLI is present and warns when
-it isn't. If paper is absent, sweeper runs `claude` directly under its own login (no capture).
-The learning loop above runs entirely on sweeper's own JSONL telemetry.
+nor writes the paper/tapes API. If paper is absent, sweeper runs `claude` directly under its
+own login (no capture). The learning loop above runs entirely on sweeper's own JSONL telemetry.

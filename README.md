@@ -226,7 +226,7 @@ This describes the Go CLI and skill-based integrations (Claude Code, opencode). 
 
 ## Session Capture via Paper
 
-When [paper](https://github.com/papercomputeco/paper) is installed, sweeper launches each `claude` sub-agent via `paper start claude`, so **paper's gateway manages authentication and captures the session** — sweeper passes no `ANTHROPIC_API_KEY` and inherits no API token (those vars are stripped from the sub-agent's environment). Run `paper init` once to bring up the daemon; sweeper detects the `paper` CLI on each run and warns if it's missing. It never starts, stops, or vendors the daemon. If paper isn't installed, sweeper falls back to running `claude` directly under its own login (no capture). Silence the warning with `--no-paper` or `[paper] enabled = false`.
+When [paper](https://github.com/papercomputeco/paper) is installed, sweeper launches each `claude` sub-agent via `paper start claude`, so **paper's gateway manages authentication and captures the session** — sweeper passes no `ANTHROPIC_API_KEY` and inherits no API token (those vars are stripped from the sub-agent's environment). Run `paper init` once to bring up the daemon. If paper isn't installed, sweeper falls back to running `claude` directly under its own login (no capture).
 
 The learning loop runs on sweeper's own telemetry (`.sweeper/telemetry/*.jsonl`), which records per-fix outcome, strategy, round, and token usage:
 
