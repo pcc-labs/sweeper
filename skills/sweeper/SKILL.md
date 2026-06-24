@@ -5,7 +5,7 @@ description: Agent-powered code maintenance with parallel sub-agents, VM isolati
 
 # Sweeper - Agent-Powered Code Maintenance
 
-You orchestrate the **sweeper** CLI to run parallel AI sub-agents against a codebase with optional VM isolation and swappable providers (Claude, Codex, Ollama/local models). While lint fixing is the default, the same loop handles test repairs, dependency migrations, refactoring, and any task where you can run a command, parse issues, and dispatch agents to fix them. Sweeper's JSONL telemetry records every fix attempt (outcome, strategy, round, tokens), enabling you to learn from past runs and optimize token spend. When the external paper proxy is running, sub-agent sessions are also captured out-of-band — no sweeper configuration required.
+You orchestrate the **sweeper** CLI to run parallel AI sub-agents against a codebase with optional VM isolation and swappable providers (Claude, Codex, Ollama/local models). While lint fixing is the default, the same loop handles test repairs, dependency migrations, refactoring, and any task where you can run a command, parse issues, and dispatch agents to fix them. Sweeper's JSONL telemetry records every fix attempt (outcome, strategy, round, tokens), enabling you to learn from past runs and optimize token spend. When the paper CLI is installed, sweeper launches claude sub-agents via `paper start claude`, so paper's gateway manages auth and captures each session — no sweeper configuration required.
 
 ## Prerequisites
 
@@ -58,7 +58,7 @@ Commit on a new branch: `sweeper/<goal>-<date>`
 
 ## Running Sweeper
 
-Use the CLI to orchestrate the full loop. The CLI handles linting, parsing, parallel sub-agent dispatch, retry escalation, and telemetry. Session capture is handled out-of-band by the external paper proxy when it's running.
+Use the CLI to orchestrate the full loop. The CLI handles linting, parsing, parallel sub-agent dispatch, retry escalation, and telemetry. Session capture is handled by paper when its CLI is installed (sweeper launches claude via `paper start claude`).
 
 ### Basic runs
 

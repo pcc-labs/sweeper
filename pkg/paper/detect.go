@@ -1,32 +1,32 @@
-// Package paper detects whether spawned sub-agents are being routed through the
-// paper proxy. Capture itself requires no code: child `claude` processes inherit
-// ANTHROPIC_BASE_URL from the environment, which points at the external paperd
-// proxy started by `paper init`. This package only observes that wiring so sweeper
-// can warn when it is missing — it never starts, stops, or vendors paperd.
+// Package paper detects whether the paper CLI is available to wrap spawned
+// sub-agents. Sweeper launches claude via `paper start claude`, so paper's
+// gateway manages authentication and captures the session — no API token is
+// inherited from the environment. This package only checks that the `paper`
+// binary is present so sweeper can warn when capture won't happen; it never
+// starts, stops, or vendors paperd.
 package paper
 
-import "os"
+import "os/exec"
 
-// ProxyEnvVar is the environment variable spawned agents inherit to reach the
-// paper proxy. When it is set, sessions flow through paper for capture.
-const ProxyEnvVar = "ANTHROPIC_BASE_URL"
+// Binary is the paper CLI sweeper shells out to (via `paper start claude`).
+const Binary = "paper"
 
-// Status reports whether the paper proxy environment is wired up.
+// Status reports whether the paper CLI is available to wrap spawned agents.
 type Status struct {
-	Enabled  bool
-	ProxyURL string
-	Message  string
+	Available bool
+	Path      string
+	Message   string
 }
 
-// Check reports the paper capture status based purely on the proxy environment
-// variable. It performs no network calls.
+// Check reports whether the paper CLI is on PATH. It performs no network calls;
+// `paper start` itself validates the daemon and auth health at launch time.
 func Check() Status {
-	if url := os.Getenv(ProxyEnvVar); url != "" {
-		return Status{Enabled: true, ProxyURL: url}
+	if path, err := exec.LookPath(Binary); err == nil {
+		return Status{Available: true, Path: path}
 	}
 	return Status{
-		Enabled: false,
-		Message: ProxyEnvVar + " not set — spawned agents won't be captured by paper. " +
-			"Run `paper init` to start the proxy.",
+		Available: false,
+		Message: "paper CLI not found — sub-agents will run without capture. " +
+			"Install paper and run `paper init` to capture sessions.",
 	}
 }

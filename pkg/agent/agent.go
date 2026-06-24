@@ -109,8 +109,8 @@ func (a *Agent) Run(ctx context.Context) (Summary, error) {
 		providerName = "claude"
 	}
 	if a.cfg.PaperEnabled && providerName == "claude" {
-		if s := paper.Check(); s.Enabled {
-			fmt.Printf("Paper: capturing via %s\n", s.ProxyURL)
+		if s := paper.Check(); s.Available {
+			fmt.Printf("Paper: capturing sub-agents via `paper start claude` (%s)\n", s.Path)
 		} else if s.Message != "" {
 			fmt.Printf("Warning: %s\n", s.Message)
 		}

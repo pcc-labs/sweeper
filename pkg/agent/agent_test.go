@@ -16,8 +16,8 @@ import (
 )
 
 func TestAgentRunPrintsPaperWarning(t *testing.T) {
-	// Paper enabled with no proxy env set: exercises the detect+warn branch.
-	t.Setenv("ANTHROPIC_BASE_URL", "")
+	// Paper enabled but the paper CLI is not on PATH: exercises the warn branch.
+	t.Setenv("PATH", t.TempDir())
 	cfg := config.Config{
 		TargetDir:    t.TempDir(),
 		Concurrency:  1,
@@ -35,8 +35,12 @@ func TestAgentRunPrintsPaperWarning(t *testing.T) {
 }
 
 func TestAgentRunPaperCapturing(t *testing.T) {
-	// Paper enabled with the proxy env present: exercises the "capturing" branch.
-	t.Setenv("ANTHROPIC_BASE_URL", "http://localhost:5000")
+	// Paper enabled and the paper CLI is on PATH: exercises the "capturing" branch.
+	dir := t.TempDir()
+	if err := os.WriteFile(dir+"/paper", []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir)
 	cfg := config.Config{
 		TargetDir:    t.TempDir(),
 		Concurrency:  1,
@@ -72,8 +76,8 @@ func TestAgentRunSkipsPaperWhenDisabled(t *testing.T) {
 
 func TestAgentRunSkipsPaperForNonClaudeProvider(t *testing.T) {
 	// Paper capture only applies to the claude provider; a non-claude provider
-	// must not emit the paper warning even when ANTHROPIC_BASE_URL is unset.
-	t.Setenv("ANTHROPIC_BASE_URL", "")
+	// must not emit the paper warning even when the paper CLI is absent.
+	t.Setenv("PATH", t.TempDir())
 	cfg := config.Config{
 		TargetDir:    t.TempDir(),
 		Concurrency:  1,
@@ -978,4 +982,3 @@ func (f *fakePublisher) Close() error {
 	f.closed = true
 	return nil
 }
-

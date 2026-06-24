@@ -24,9 +24,10 @@ name = "claude"
 # allowed_tools = ["Read", "Write", "Edit", "Glob", "Grep"]
 
 [paper]
-# Session capture flows through the external paper proxy: spawned agents inherit
-# ANTHROPIC_BASE_URL (set by `paper init`). `enabled` only toggles whether sweeper
-# checks for that wiring and warns when it's missing — it never starts paperd.
+# When the paper CLI is installed, sweeper launches claude sub-agents via
+# `paper start claude` so paper's gateway manages auth and captures the session
+# (no ANTHROPIC_API_KEY is used). `enabled` only toggles whether sweeper warns
+# when the paper CLI is missing — it never starts paperd.
 enabled = true
 
 [telemetry]

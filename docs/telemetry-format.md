@@ -79,8 +79,10 @@ these per linter alongside fix outcomes — no external data source is required.
 
 ## Session Capture (Paper)
 
-Full session transcripts are captured out-of-band by the external **paper** proxy: spawned
-`claude` sub-agents inherit `ANTHROPIC_BASE_URL` (set by `paper init`), so their traffic flows
-through paper without any code in sweeper. Sweeper neither reads nor writes the paper/tapes
-API — it only detects the proxy env and warns when it's missing. The learning loop above runs
-entirely on sweeper's own JSONL telemetry.
+Full session transcripts are captured by the external **paper** gateway. When the `paper` CLI
+is installed, sweeper launches each `claude` sub-agent via `paper start claude`, so paper
+manages authentication and captures the session — sweeper passes no `ANTHROPIC_API_KEY` and
+strips the Anthropic auth/proxy vars from the sub-agent's environment. Sweeper neither reads
+nor writes the paper/tapes API; it only checks that the `paper` CLI is present and warns when
+it isn't. If paper is absent, sweeper runs `claude` directly under its own login (no capture).
+The learning loop above runs entirely on sweeper's own JSONL telemetry.

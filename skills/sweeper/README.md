@@ -44,7 +44,7 @@ For session capture through paper (optional):
 paper init
 ```
 
-This starts the external paper proxy and sets `ANTHROPIC_BASE_URL`; spawned sub-agents inherit it and are captured automatically. Sweeper requires no configuration for this — it only warns when the proxy env is missing.
+This brings up the paper daemon. Sweeper then launches each claude sub-agent via `paper start claude`, so paper's gateway manages auth and captures the session (no API token is passed). Sweeper requires no configuration for this — it only warns when the `paper` CLI is missing.
 
 ## What It Does
 
@@ -53,7 +53,7 @@ This starts the external paper proxy and sets `ANTHROPIC_BASE_URL`; spawned sub-
 3. Retries with escalating strategies (standard -> retry -> exploration)
 4. Swappable providers: `--provider claude` (default), `--provider codex`, `--provider ollama --model <name>`
 5. Optional VM isolation via stereOS for security and resource isolation (CLI providers only)
-6. Paper (when running) captures every sub-agent session out-of-band via the inherited proxy env
+6. Paper (when installed) captures every sub-agent session — sweeper launches claude via `paper start claude`
 7. `sweeper observe` shows success rates, strategy effectiveness, and token spend
 8. Session state tracked in `sweeper.md` for resume across restarts
 

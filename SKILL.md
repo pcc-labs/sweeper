@@ -104,7 +104,7 @@ Before running sweeper, ensure these are available:
 
 1. **claude** - Claude Code CLI must be in PATH. The tool invokes `claude --print --dangerously-skip-permissions <prompt>` for each fix task.
 2. **golangci-lint** (only for default mode) - Must be in PATH. Install: `go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest`
-3. **paper** (optional) - When `paper init` is running, spawned sub-agents are captured through its proxy automatically (via inherited `ANTHROPIC_BASE_URL`). Sweeper only detects and warns if the proxy env is missing.
+3. **paper** (optional) - When the `paper` CLI is installed (`paper init` to bring up the daemon), sweeper launches each claude sub-agent via `paper start claude`, so paper's gateway manages auth and captures the session (no `ANTHROPIC_API_KEY` used). Sweeper detects the `paper` CLI and warns if it's missing.
 4. **mb** (optional, for `--vm` mode) - Masterblaster CLI for stereOS VMs. Required only when using `--vm` flag.
 
 When using `-- <command>` or piped input, golangci-lint is not required.
@@ -228,5 +228,5 @@ Use `sweeper observe` to analyze this data. It shows success rates per linter an
 - **"cannot use both piped input and -- command"** - Choose one input method: pipe or `--`
 - **"No lint issues found"** - The target codebase is clean; nothing to fix
 - **Custom command produces no parseable output** - Sweeper falls back to raw mode; the agent will analyze the full output
-- **Paper warning** (`ANTHROPIC_BASE_URL not set`) - The paper proxy isn't wired up; run `paper init`, or use `--no-paper` to suppress the warning
+- **Paper warning** (`paper CLI not found`) - Install paper and run `paper init` to capture sessions, or use `--no-paper` to suppress the warning
 - **Tasks failing** - Check the sub-agent output in the telemetry JSONL for error details
