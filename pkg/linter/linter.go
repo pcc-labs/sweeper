@@ -208,5 +208,5 @@ func normalizeIssuePaths(issues []Issue, dir string) {
 }
 
 func Run(ctx context.Context, dir string) (ParseResult, error) {
-	return RunCommand(ctx, dir, []string{"golangci-lint", "run", "--out-format=line-number", "./..."})
+	return RunCommand(ctx, dir, []string{"golangci-lint", "run", "./..."})
 }

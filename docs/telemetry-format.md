@@ -14,7 +14,7 @@ Emitted once per session start.
   "type": "init",
   "data": {
     "name": "session-name",
-    "linterCommand": "golangci-lint run --out-format=line-number ./...",
+    "linterCommand": "golangci-lint run ./...",
     "targetDir": ".",
     "maxRounds": 3,
     "staleThreshold": 2
