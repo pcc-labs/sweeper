@@ -18,13 +18,6 @@ func TestDefaults(t *testing.T) {
 	}
 }
 
-func TestDefaultsIncludeTapes(t *testing.T) {
-	cfg := Default()
-	if cfg.NoTapes {
-		t.Error("tapes should be enabled by default")
-	}
-}
-
 func TestDefaultMaxRounds(t *testing.T) {
 	cfg := Default()
 	if cfg.MaxRounds != 1 {

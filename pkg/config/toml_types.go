@@ -17,7 +17,6 @@ type RunConfig struct {
 	MaxRounds      int    `toml:"max_rounds"`
 	StaleThreshold int    `toml:"stale_threshold"`
 	DryRun         bool   `toml:"dry_run"`
-	NoTapes        bool   `toml:"no_tapes"`
 }
 
 func (r RunConfig) ParseRateLimit() (time.Duration, error) {
@@ -81,7 +80,6 @@ var TOMLConfigKeySet = map[string]bool{
 	"run.max_rounds":                      true,
 	"run.stale_threshold":                 true,
 	"run.dry_run":                         true,
-	"run.no_tapes":                        true,
 	"provider.name":                       true,
 	"provider.model":                      true,
 	"provider.api_base":                   true,

@@ -141,7 +141,6 @@ func TestFromTOMLVMFields(t *testing.T) {
 	tc.Provider.Model = "gpt-4"
 	tc.Provider.APIBase = "https://api.example.com"
 	tc.Run.DryRun = true
-	tc.Run.NoTapes = true
 	tc.Run.MaxRounds = 5
 	tc.Run.StaleThreshold = 3
 	cfg := FromTOML(tc)
@@ -162,9 +161,6 @@ func TestFromTOMLVMFields(t *testing.T) {
 	}
 	if !cfg.DryRun {
 		t.Error("expected DryRun true")
-	}
-	if !cfg.NoTapes {
-		t.Error("expected NoTapes true")
 	}
 	if cfg.MaxRounds != 5 {
 		t.Errorf("expected MaxRounds 5, got %d", cfg.MaxRounds)

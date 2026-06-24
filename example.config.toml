@@ -16,13 +16,15 @@ rate_limit = "2s"
 max_rounds = 1
 stale_threshold = 2
 # dry_run = false
-# no_tapes = false
 
 [provider]
 name = "claude"
 # model = ""
 # api_base = ""
 # allowed_tools = ["Read", "Write", "Edit", "Glob", "Grep"]
+# When the paper CLI is installed, sweeper launches claude sub-agents via
+# `paper start claude` so paper's gateway manages auth and captures the session
+# (no ANTHROPIC_API_KEY is used). No configuration is needed.
 
 [telemetry]
 # backend: "jsonl" (default, always active) or "confluent" (adds Kafka fan-out)

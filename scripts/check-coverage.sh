@@ -25,11 +25,6 @@ EXCLUDED_FILES="claude.go|codex.go"
 # impossible to trigger with SQLite's permissive type coercion driver,
 # or shell out to external binaries (mb CLI for stereOS VMs).
 EXCLUDED_FUNCTIONS=(
-  "pkg/tapes/reader.go:.*NewReader"
-  "pkg/tapes/reader.go:.*ListSessions"
-  "pkg/tapes/reader.go:.*RecentSessions"
-  "pkg/tapes/reader.go:.*GetSession"
-  "pkg/observer/observer.go:.*enrichWithTapes"
   "pkg/vm/vm.go:.*defaultRunner"
   "pkg/vm/vm.go:.*Boot"
   "pkg/vm/vm.go:.*Attach"

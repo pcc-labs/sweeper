@@ -5,7 +5,6 @@ import (
 
 	"github.com/papercomputeco/sweeper/pkg/config"
 	"github.com/papercomputeco/sweeper/pkg/observer"
-	"github.com/papercomputeco/sweeper/pkg/tapes"
 	"github.com/spf13/cobra"
 )
 
@@ -20,20 +19,7 @@ func newObserveCmd() *cobra.Command {
 			}
 			telDir := tc.Telemetry.Dir
 
-			var opts []observer.ObserverOption
-
-			if !noTapes {
-				dbPath := tapes.FindDB(".")
-				if dbPath != "" {
-					reader, err := tapes.NewReader(dbPath)
-					if err == nil {
-						defer func() { _ = reader.Close() }()
-						opts = append(opts, observer.WithTapesReader(reader))
-					}
-				}
-			}
-
-			obs := observer.New(telDir, opts...)
+			obs := observer.New(telDir)
 			insights, err := obs.Analyze()
 			if err != nil {
 				return err

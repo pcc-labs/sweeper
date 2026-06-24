@@ -103,6 +103,51 @@ func TestClaudeExecutorFallsBackToBuildPrompt(t *testing.T) {
 	}
 }
 
+func TestClaudeExecutorLaunchesViaPaper(t *testing.T) {
+	dir := t.TempDir()
+	// Fake paper echoes its args so we can confirm `paper start claude -- ...`.
+	fakePaper := filepath.Join(dir, "paper")
+	if err := os.WriteFile(fakePaper, []byte("#!/bin/sh\necho \"$@\""), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir)
+
+	prompt := "fix the thing"
+	task := Task{ID: 0, File: "test.go", Dir: t.TempDir(), Prompt: prompt}
+	result := NewClaudeExecutor()(context.Background(), task)
+	if !result.Success {
+		t.Fatalf("expected success, got error: %s", result.Error)
+	}
+	if !strings.Contains(result.Output, "start claude --") {
+		t.Errorf("expected launch via `paper start claude --`, got: %s", result.Output)
+	}
+	if !strings.Contains(result.Output, prompt) {
+		t.Errorf("expected prompt passed through to claude, got: %s", result.Output)
+	}
+}
+
+func TestChildEnvStripsAnthropicVars(t *testing.T) {
+	t.Setenv("ANTHROPIC_API_KEY", "secret")
+	t.Setenv("ANTHROPIC_BASE_URL", "http://localhost:5000")
+	t.Setenv("PATH", "/usr/bin")
+	env := childEnv()
+	for _, kv := range env {
+		if strings.HasPrefix(kv, "ANTHROPIC_API_KEY=") || strings.HasPrefix(kv, "ANTHROPIC_BASE_URL=") {
+			t.Errorf("expected Anthropic auth var stripped, found: %s", kv)
+		}
+	}
+	// Unrelated vars (e.g. PATH) must be preserved so the agent still runs.
+	foundPath := false
+	for _, kv := range env {
+		if strings.HasPrefix(kv, "PATH=") {
+			foundPath = true
+		}
+	}
+	if !foundPath {
+		t.Error("expected PATH to be preserved in child env")
+	}
+}
+
 func TestClaudeExecutorSuccess(t *testing.T) {
 	dir := t.TempDir()
 	fakeClaude := filepath.Join(dir, "claude")

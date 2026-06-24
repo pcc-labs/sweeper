@@ -8,7 +8,6 @@ type Config struct {
 	RateLimit      time.Duration // minimum delay between agent dispatches
 	TelemetryDir   string
 	DryRun         bool
-	NoTapes        bool
 	LintCommand    []string
 	LinterName     string
 	MaxRounds      int
@@ -63,7 +62,6 @@ func FromTOML(tc TOMLConfig) Config {
 		RateLimit:      rateLimit,
 		TelemetryDir:   tc.Telemetry.Dir,
 		DryRun:         tc.Run.DryRun,
-		NoTapes:        tc.Run.NoTapes,
 		MaxRounds:      tc.Run.MaxRounds,
 		StaleThreshold: tc.Run.StaleThreshold,
 		VM:             tc.VM.Enabled,

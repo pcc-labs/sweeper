@@ -1,16 +1,13 @@
 package observer
 
 import (
-	"database/sql"
 	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
 
-	"github.com/papercomputeco/sweeper/pkg/tapes"
 	"github.com/papercomputeco/sweeper/pkg/telemetry"
-	_ "modernc.org/sqlite"
 )
 
 func writeEvents(t *testing.T, dir string, events []telemetry.Event) {
@@ -22,45 +19,6 @@ func writeEvents(t *testing.T, dir string, events []telemetry.Event) {
 		data, _ := json.Marshal(e)
 		_, _ = f.Write(append(data, '\n'))
 	}
-}
-
-func setupTapesDB(t *testing.T) *tapes.Reader {
-	t.Helper()
-	db, err := sql.Open("sqlite", ":memory:")
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, err = db.Exec(`
-		CREATE TABLE nodes (
-			hash TEXT PRIMARY KEY,
-			parent_hash TEXT,
-			role TEXT,
-			content JSON,
-			model TEXT,
-			provider TEXT,
-			agent_name TEXT,
-			prompt_tokens INTEGER,
-			completion_tokens INTEGER,
-			total_tokens INTEGER,
-			cache_creation_input_tokens INTEGER,
-			cache_read_input_tokens INTEGER,
-			project TEXT,
-			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-		)
-	`)
-	if err != nil {
-		t.Fatal(err)
-	}
-	// Insert some sessions with token usage.
-	_, err = db.Exec(
-		`INSERT INTO nodes (hash, parent_hash, role, content, model, prompt_tokens, completion_tokens, total_tokens, created_at)
-		 VALUES (?, NULL, ?, ?, ?, ?, ?, ?, ?)`,
-		"root1", "user", `[{"type":"text","text":"fix"}]`, "claude-sonnet-4-20250514", 100, 50, 150, time.Now(),
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return tapes.NewReaderFromDB(db)
 }
 
 func TestObserveSuccessRate(t *testing.T) {
@@ -94,119 +52,65 @@ func TestObserveEmptyDir(t *testing.T) {
 	}
 }
 
-func TestObserveWithTapesEnabledNilReader(t *testing.T) {
+func TestObserveTokensFromTelemetry(t *testing.T) {
 	dir := t.TempDir()
 	events := []telemetry.Event{
-		{Timestamp: time.Now(), Type: "fix_attempt", Data: map[string]any{"linter": "revive", "success": true}},
+		{Timestamp: time.Now(), Type: "fix_attempt", Data: map[string]any{
+			"linter": "revive", "success": true, "prompt_tokens": 100, "output_tokens": 50}},
+		{Timestamp: time.Now(), Type: "fix_attempt", Data: map[string]any{
+			"linter": "revive", "success": false, "prompt_tokens": 200, "output_tokens": 25}},
 	}
 	writeEvents(t, dir, events)
-	obs := New(dir, WithTapesEnabled(true))
+	obs := New(dir)
 	insights, err := obs.Analyze()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(insights) == 0 {
-		t.Fatal("expected at least one insight")
+	if len(insights) != 1 {
+		t.Fatalf("expected 1 insight, got %d", len(insights))
 	}
-	for _, ins := range insights {
-		if ins.TotalTokens != 0 {
-			t.Errorf("expected TotalTokens=0 when tapesReader is nil, got %d", ins.TotalTokens)
-		}
-	}
-}
-
-func TestObserveWithoutTapes(t *testing.T) {
-	dir := t.TempDir()
-	events := []telemetry.Event{
-		{Timestamp: time.Now(), Type: "fix_attempt", Data: map[string]any{"linter": "revive", "success": false}},
-		{Timestamp: time.Now(), Type: "fix_attempt", Data: map[string]any{"linter": "revive", "success": true}},
-	}
-	writeEvents(t, dir, events)
-	obs := New(dir, WithTapesEnabled(false))
-	insights, err := obs.Analyze()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(insights) == 0 {
-		t.Fatal("expected at least one insight")
-	}
-	for _, ins := range insights {
-		if ins.TotalTokens != 0 {
-			t.Errorf("expected TotalTokens=0 when tapesEnabled=false, got %d", ins.TotalTokens)
-		}
+	// 100+50 + 200+25 = 375
+	if insights[0].TotalTokens != 375 {
+		t.Errorf("expected TotalTokens=375 aggregated from telemetry, got %d", insights[0].TotalTokens)
 	}
 }
 
-func TestObserveWithTapesEnrichment(t *testing.T) {
-	dir := t.TempDir()
-	events := []telemetry.Event{
-		{Timestamp: time.Now(), Type: "fix_attempt", Data: map[string]any{"linter": "revive", "success": true}},
-		{Timestamp: time.Now(), Type: "fix_attempt", Data: map[string]any{"linter": "revive", "success": false}},
-	}
-	writeEvents(t, dir, events)
-	reader := setupTapesDB(t)
-	obs := New(dir, WithTapesReader(reader))
-	insights, err := obs.Analyze()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(insights) == 0 {
-		t.Fatal("expected at least one insight")
-	}
-	// With tapes enrichment, TotalTokens should be set.
-	found := false
-	for _, ins := range insights {
-		if ins.TotalTokens > 0 {
-			found = true
-		}
-	}
-	if !found {
-		t.Error("expected at least one insight with TotalTokens > 0 after tapes enrichment")
-	}
-}
-
-func TestObserveWithTapesZeroTokens(t *testing.T) {
+func TestObserveZeroTokensWhenAbsent(t *testing.T) {
 	dir := t.TempDir()
 	events := []telemetry.Event{
 		{Timestamp: time.Now(), Type: "fix_attempt", Data: map[string]any{"linter": "revive", "success": true}},
 	}
 	writeEvents(t, dir, events)
-
-	// Create a tapes reader with sessions that have zero tokens.
-	db, err := sql.Open("sqlite", ":memory:")
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, err = db.Exec(`
-		CREATE TABLE nodes (
-			hash TEXT PRIMARY KEY, parent_hash TEXT, role TEXT, content JSON,
-			model TEXT, provider TEXT, agent_name TEXT, prompt_tokens INTEGER,
-			completion_tokens INTEGER, total_tokens INTEGER,
-			cache_creation_input_tokens INTEGER, cache_read_input_tokens INTEGER,
-			project TEXT, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-		)
-	`)
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, err = db.Exec(
-		`INSERT INTO nodes (hash, parent_hash, role, content, model, prompt_tokens, completion_tokens, total_tokens, created_at)
-		 VALUES (?, NULL, ?, ?, ?, ?, ?, ?, ?)`,
-		"root1", "user", `[]`, "model", 0, 0, 0, time.Now(),
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	reader := tapes.NewReaderFromDB(db)
-	obs := New(dir, WithTapesReader(reader))
+	obs := New(dir)
 	insights, err := obs.Analyze()
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, ins := range insights {
 		if ins.TotalTokens != 0 {
-			t.Errorf("expected TotalTokens=0 when sessions have zero tokens, got %d", ins.TotalTokens)
+			t.Errorf("expected TotalTokens=0 when telemetry has no token fields, got %d", ins.TotalTokens)
 		}
+	}
+}
+
+func TestEventInt(t *testing.T) {
+	cases := []struct {
+		name string
+		in   any
+		want int
+	}{
+		{"float64", float64(42), 42},
+		{"int", 7, 7},
+		{"int64", int64(9), 9},
+		{"unsupported", "nope", 0},
+		{"nil", nil, 0},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := eventInt(c.in); got != c.want {
+				t.Errorf("eventInt(%v) = %d, want %d", c.in, got, c.want)
+			}
+		})
 	}
 }
 
@@ -436,103 +340,5 @@ func TestAnalyzeHistoryReadError(t *testing.T) {
 	_, err := obs.AnalyzeHistory()
 	if err == nil {
 		t.Error("expected error reading unreadable file")
-	}
-}
-
-func TestEnrichWithTapesZeroAttempts(t *testing.T) {
-	dir := t.TempDir()
-	// Write non-fix_attempt events so computeInsights returns empty insights.
-	// This means enrichWithTapes receives insights with totalAttempts == 0.
-	events := []telemetry.Event{
-		{Timestamp: time.Now(), Type: "round_complete", Data: map[string]any{"round": float64(1)}},
-	}
-	writeEvents(t, dir, events)
-	reader := setupTapesDB(t) // has sessions with tokens
-	obs := New(dir, WithTapesReader(reader))
-	insights, err := obs.Analyze()
-	if err != nil {
-		t.Fatal(err)
-	}
-	// No fix_attempt events → no insights → enrichWithTapes hits totalAttempts == 0 return.
-	for _, ins := range insights {
-		if ins.TotalTokens != 0 {
-			t.Errorf("expected TotalTokens=0 with zero attempts, got %d", ins.TotalTokens)
-		}
-	}
-}
-
-func TestEnrichWithTapesGetSessionError(t *testing.T) {
-	dir := t.TempDir()
-	events := []telemetry.Event{
-		{Timestamp: time.Now(), Type: "fix_attempt", Data: map[string]any{"linter": "revive", "success": true}},
-	}
-	writeEvents(t, dir, events)
-
-	// Create a DB with a minimal schema that satisfies RecentSessions
-	// (SELECT hash FROM nodes WHERE parent_hash IS NULL) but causes
-	// GetSession to fail because it queries columns that don't exist
-	// (role, content, model, prompt_tokens, etc.).
-	db, err := sql.Open("sqlite", ":memory:")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = db.Close() }()
-	_, _ = db.Exec(`CREATE TABLE nodes (
-		hash TEXT PRIMARY KEY,
-		parent_hash TEXT,
-		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-	)`)
-	_, _ = db.Exec(`INSERT INTO nodes (hash, parent_hash) VALUES ('root1', NULL)`)
-	reader := tapes.NewReaderFromDB(db)
-
-	obs := New(dir, WithTapesReader(reader))
-	insights, err := obs.Analyze()
-	if err != nil {
-		t.Fatal(err)
-	}
-	// enrichWithTapes continues past GetSession errors; tokens stay at zero.
-	if len(insights) == 0 {
-		t.Fatal("expected insights even with GetSession errors")
-	}
-	for _, ins := range insights {
-		if ins.TotalTokens != 0 {
-			t.Errorf("expected TotalTokens=0 when GetSession errors, got %d", ins.TotalTokens)
-		}
-	}
-}
-
-func TestEnrichWithTapesReaderError(t *testing.T) {
-	dir := t.TempDir()
-	events := []telemetry.Event{
-		{Timestamp: time.Now(), Type: "fix_attempt", Data: map[string]any{"linter": "revive", "success": true}},
-	}
-	writeEvents(t, dir, events)
-
-	// Create a tapes reader with a closed DB to trigger errors.
-	db, err := sql.Open("sqlite", ":memory:")
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, _ = db.Exec(`CREATE TABLE nodes (hash TEXT PRIMARY KEY, parent_hash TEXT, role TEXT, content JSON,
-		model TEXT, provider TEXT, agent_name TEXT, prompt_tokens INTEGER,
-		completion_tokens INTEGER, total_tokens INTEGER,
-		cache_creation_input_tokens INTEGER, cache_read_input_tokens INTEGER,
-		project TEXT, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)`)
-	reader := tapes.NewReaderFromDB(db)
-	_ = db.Close() // Close to force errors
-
-	obs := New(dir, WithTapesReader(reader))
-	insights, err := obs.Analyze()
-	if err != nil {
-		t.Fatal(err)
-	}
-	// enrichWithTapes errors are swallowed; insights should still be returned.
-	if len(insights) == 0 {
-		t.Fatal("expected insights even with tapes errors")
-	}
-	for _, ins := range insights {
-		if ins.TotalTokens != 0 {
-			t.Errorf("expected TotalTokens=0 when tapes errors, got %d", ins.TotalTokens)
-		}
 	}
 }

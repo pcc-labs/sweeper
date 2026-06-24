@@ -13,7 +13,6 @@ import (
 	"github.com/papercomputeco/sweeper/pkg/planner"
 	"github.com/papercomputeco/sweeper/pkg/provider"
 	"github.com/papercomputeco/sweeper/pkg/session"
-	"github.com/papercomputeco/sweeper/pkg/tapes"
 	"github.com/papercomputeco/sweeper/pkg/telemetry"
 	"github.com/papercomputeco/sweeper/pkg/worker"
 )
@@ -100,15 +99,6 @@ func (a *Agent) Run(ctx context.Context) (Summary, error) {
 	defer func() { _ = a.pub.Close() }()
 	if a.vm != nil {
 		defer func() { _ = a.vm.Shutdown() }()
-	}
-
-	if !a.cfg.NoTapes {
-		status := tapes.CheckInstallation(tapes.FindDB(a.cfg.TargetDir))
-		if status.Available {
-			fmt.Printf("Tapes: using %s\n", status.DBPath)
-		} else if status.Message != "" {
-			fmt.Printf("Warning: %s\n", status.Message)
-		}
 	}
 
 	lintCmd := "golangci-lint run ./..."

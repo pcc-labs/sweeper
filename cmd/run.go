@@ -59,9 +59,6 @@ Examples:
 			if rootPF.Changed("rate-limit") {
 				tc.Run.RateLimit = rateLimit.String()
 			}
-			if rootPF.Changed("no-tapes") {
-				tc.Run.NoTapes = noTapes
-			}
 			if cmd.Flags().Changed("max-rounds") {
 				tc.Run.MaxRounds = maxRounds
 			}

@@ -34,7 +34,6 @@ Runs the full lint-fix-retry loop:
 - `--target, -t <dir>` - Directory to lint and fix (default: `.`)
 - `--concurrency, -c <n>` - Max parallel sub-agents (default: `3`)
 - `--dry-run` - Show what would be fixed without running agents
-- `--no-tapes` - Disable tapes session tracking
 - `--max-rounds <n>` - Maximum retry rounds (default: `1` = single pass)
 - `--stale-threshold <n>` - Consecutive non-improving rounds before exploration mode (default: `2`)
 - `--vm` - Boot ephemeral stereOS VM, teardown on exit
@@ -92,7 +91,7 @@ sweeper observe
 sweeper observe --target /path/to/project
 ```
 
-Output shows: linter name, attempt count, successes, success rate percentage, and token usage (if tapes is available).
+Output shows: linter name, attempt count, successes, success rate percentage, and token usage (aggregated from sweeper's own telemetry).
 
 ### `sweeper version`
 
@@ -104,7 +103,7 @@ Before running sweeper, ensure these are available:
 
 1. **claude** - Claude Code CLI must be in PATH. The tool invokes `claude --print --dangerously-skip-permissions <prompt>` for each fix task.
 2. **golangci-lint** (only for default mode) - Must be in PATH. Install: `go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest`
-3. **tapes** (optional) - If `~/.tapes/tapes.db` exists, sweeper tracks token usage per session.
+3. **paper** (optional) - When the `paper` CLI is installed (`paper init` to bring up the daemon), sweeper launches each claude sub-agent via `paper start claude`, so paper's gateway manages auth and captures the session (no `ANTHROPIC_API_KEY` used). Sweeper detects the `paper` CLI and warns if it's missing.
 4. **mb** (optional, for `--vm` mode) - Masterblaster CLI for stereOS VMs. Required only when using `--vm` flag.
 
 When using `-- <command>` or piped input, golangci-lint is not required.
@@ -228,5 +227,4 @@ Use `sweeper observe` to analyze this data. It shows success rates per linter an
 - **"cannot use both piped input and -- command"** - Choose one input method: pipe or `--`
 - **"No lint issues found"** - The target codebase is clean; nothing to fix
 - **Custom command produces no parseable output** - Sweeper falls back to raw mode; the agent will analyze the full output
-- **Tapes warning** - Tapes is optional; use `--no-tapes` to suppress the warning
 - **Tasks failing** - Check the sub-agent output in the telemetry JSONL for error details

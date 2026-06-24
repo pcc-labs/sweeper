@@ -67,14 +67,21 @@ All implementations write to `.sweeper/telemetry/YYYY-MM-DD.jsonl` (date-named f
 
 All implementations read all `*.jsonl` files in the directory for analysis and session resume.
 
-## Tapes Integration
+## Token Usage
 
-Tapes is the primary source for token usage data. The JSONL telemetry tracks fix outcomes (success/failure, strategy, round). Tapes tracks the cost (prompt tokens, completion tokens, session duration).
+Token usage is recorded directly in the JSONL telemetry: each `fix_attempt` event carries
+`prompt_tokens` and `output_tokens` reported by the provider. `sweeper observe` aggregates
+these per linter alongside fix outcomes — no external data source is required.
 
-`sweeper observe` joins both data sources:
-1. Read `.sweeper/telemetry/*.jsonl` for fix attempt outcomes
-2. Query `tapes.db` for recent session token counts
-3. Proportionally allocate tokens across linters based on attempt counts
-4. Report combined insights: success rates + token spend
+1. Read `.sweeper/telemetry/*.jsonl` for fix attempt outcomes and per-attempt tokens
+2. Sum `prompt_tokens` + `output_tokens` per linter
+3. Report combined insights: success rates + token spend
 
-This separation keeps telemetry lightweight (no token counting in the hot path) while tapes provides the authoritative cost data.
+## Session Capture (Paper)
+
+Full session transcripts are captured by the external **paper** gateway. When the `paper` CLI
+is installed, sweeper launches each `claude` sub-agent via `paper start claude`, so paper
+manages authentication and captures the session — sweeper passes no `ANTHROPIC_API_KEY` and
+strips the Anthropic auth/proxy vars from the sub-agent's environment. Sweeper neither reads
+nor writes the paper/tapes API. If paper is absent, sweeper runs `claude` directly under its
+own login (no capture). The learning loop above runs entirely on sweeper's own JSONL telemetry.

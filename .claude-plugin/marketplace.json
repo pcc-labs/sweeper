@@ -5,7 +5,7 @@
     {
       "name": "sweeper",
       "source": ".",
-      "description": "Agent-powered code maintenance with parallel sub-agents and tapes-driven learning",
+      "description": "Agent-powered code maintenance with parallel sub-agents and telemetry-driven learning",
       "version": "0.1.0"
     }
   ]
