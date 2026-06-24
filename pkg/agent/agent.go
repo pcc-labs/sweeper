@@ -102,7 +102,13 @@ func (a *Agent) Run(ctx context.Context) (Summary, error) {
 		defer func() { _ = a.vm.Shutdown() }()
 	}
 
-	if a.cfg.PaperEnabled {
+	// Paper capture works by the spawned `claude` child inheriting
+	// ANTHROPIC_BASE_URL, so the detect+warn only applies to the claude provider.
+	providerName := a.cfg.Provider
+	if providerName == "" {
+		providerName = "claude"
+	}
+	if a.cfg.PaperEnabled && providerName == "claude" {
 		if s := paper.Check(); s.Enabled {
 			fmt.Printf("Paper: capturing via %s\n", s.ProxyURL)
 		} else if s.Message != "" {

@@ -35,6 +35,7 @@ func Default() Config {
 		MaxRounds:      1,
 		StaleThreshold: 2,
 		Provider:       "claude",
+		PaperEnabled:   true,
 	}
 }
 
@@ -47,6 +48,16 @@ func ClampConcurrency(n int) int {
 		return MaxConcurrency
 	}
 	return n
+}
+
+// resolvePaperEnabled decides whether the paper capture detect+warn runs.
+// The explicit [paper] enabled field wins when set; otherwise the deprecated
+// run.no_tapes alias decides (and paper defaults to on).
+func resolvePaperEnabled(tc TOMLConfig) bool {
+	if tc.Paper.Enabled != nil {
+		return *tc.Paper.Enabled
+	}
+	return !tc.Run.NoTapes
 }
 
 // FromTOML converts a TOMLConfig into the runtime Config struct.
@@ -63,7 +74,7 @@ func FromTOML(tc TOMLConfig) Config {
 		RateLimit:      rateLimit,
 		TelemetryDir:   tc.Telemetry.Dir,
 		DryRun:         tc.Run.DryRun,
-		PaperEnabled:   tc.Paper.Enabled && !tc.Run.NoTapes,
+		PaperEnabled:   resolvePaperEnabled(tc),
 		MaxRounds:      tc.Run.MaxRounds,
 		StaleThreshold: tc.Run.StaleThreshold,
 		VM:             tc.VM.Enabled,

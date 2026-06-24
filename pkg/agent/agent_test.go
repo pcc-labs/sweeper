@@ -70,6 +70,29 @@ func TestAgentRunSkipsPaperWhenDisabled(t *testing.T) {
 	}
 }
 
+func TestAgentRunSkipsPaperForNonClaudeProvider(t *testing.T) {
+	// Paper capture only applies to the claude provider; a non-claude provider
+	// must not emit the paper warning even when ANTHROPIC_BASE_URL is unset.
+	t.Setenv("ANTHROPIC_BASE_URL", "")
+	cfg := config.Config{
+		TargetDir:    t.TempDir(),
+		Concurrency:  1,
+		TelemetryDir: t.TempDir(),
+		PaperEnabled: true,
+		Provider:     "ollama",
+	}
+	fakeLinter := func(ctx context.Context, dir string) (linter.ParseResult, error) {
+		return linter.ParseResult{}, nil
+	}
+	a := New(cfg, WithLinterFunc(fakeLinter), WithExecutor(func(ctx context.Context, task worker.Task) worker.Result {
+		return worker.Result{}
+	}))
+	_, err := a.Run(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestAgentRunWithFakeExecutor(t *testing.T) {
 	dir := t.TempDir()
 	cfg := config.Config{

@@ -34,6 +34,28 @@ func TestDeprecatedNoTapesDisablesPaper(t *testing.T) {
 	}
 }
 
+func TestExplicitPaperEnabledOverridesDeprecatedNoTapes(t *testing.T) {
+	// A stale no_tapes=true must not silently override an explicit paper.enabled=true.
+	tc := NewDefaultTOMLConfig()
+	tc.Run.NoTapes = true
+	enabled := true
+	tc.Paper.Enabled = &enabled
+	cfg := FromTOML(tc)
+	if !cfg.PaperEnabled {
+		t.Error("explicit paper.enabled=true should win over deprecated no_tapes=true")
+	}
+}
+
+func TestExplicitPaperDisabled(t *testing.T) {
+	tc := NewDefaultTOMLConfig()
+	disabled := false
+	tc.Paper.Enabled = &disabled
+	cfg := FromTOML(tc)
+	if cfg.PaperEnabled {
+		t.Error("explicit paper.enabled=false should disable paper detect+warn")
+	}
+}
+
 func TestDefaultMaxRounds(t *testing.T) {
 	cfg := Default()
 	if cfg.MaxRounds != 1 {

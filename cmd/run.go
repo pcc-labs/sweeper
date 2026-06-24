@@ -60,7 +60,8 @@ Examples:
 				tc.Run.RateLimit = rateLimit.String()
 			}
 			if rootPF.Changed("no-paper") {
-				tc.Paper.Enabled = !noPaper
+				enabled := !noPaper
+				tc.Paper.Enabled = &enabled // explicit; wins over deprecated --no-tapes
 			}
 			if rootPF.Changed("no-tapes") { // deprecated alias for --no-paper
 				tc.Run.NoTapes = noTapes

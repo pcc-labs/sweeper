@@ -26,8 +26,12 @@ type RunConfig struct {
 // PaperConfig controls the paper capture detect+warn. Capture itself is handled
 // by the external paperd proxy (via ANTHROPIC_BASE_URL); enabling this only
 // toggles whether sweeper checks for and warns about that wiring.
+//
+// Enabled is a pointer so an unset value (nil) can be distinguished from an
+// explicit false: when nil, the deprecated run.no_tapes alias decides; when
+// set, the explicit value wins over the alias.
 type PaperConfig struct {
-	Enabled bool `toml:"enabled"`
+	Enabled *bool `toml:"enabled"`
 }
 
 func (r RunConfig) ParseRateLimit() (time.Duration, error) {
@@ -77,9 +81,8 @@ func NewDefaultTOMLConfig() TOMLConfig {
 		Provider: ProviderConfig{
 			Name: "claude",
 		},
-		Paper: PaperConfig{
-			Enabled: true,
-		},
+		// Paper.Enabled is left nil (unset): paper detect+warn defaults to on,
+		// resolved in FromTOML, unless the deprecated no_tapes alias disables it.
 		Telemetry: TelemetryConfig{
 			Backend: "jsonl",
 			Dir:     ".sweeper/telemetry",

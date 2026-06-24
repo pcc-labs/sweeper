@@ -141,7 +141,8 @@ func TestFromTOMLVMFields(t *testing.T) {
 	tc.Provider.Model = "gpt-4"
 	tc.Provider.APIBase = "https://api.example.com"
 	tc.Run.DryRun = true
-	tc.Paper.Enabled = false
+	disabled := false
+	tc.Paper.Enabled = &disabled
 	tc.Run.MaxRounds = 5
 	tc.Run.StaleThreshold = 3
 	cfg := FromTOML(tc)
@@ -216,7 +217,7 @@ func TestApplyEnvOverridesAllFields(t *testing.T) {
 	if tc.Provider.APIBase != "https://api.openai.com" {
 		t.Errorf("expected api_base, got %s", tc.Provider.APIBase)
 	}
-	if tc.Paper.Enabled {
+	if tc.Paper.Enabled == nil || *tc.Paper.Enabled {
 		t.Error("expected paper.enabled false from SWEEPER_PAPER_ENABLED=false")
 	}
 	if tc.Telemetry.Backend != "confluent" {
