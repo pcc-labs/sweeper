@@ -17,7 +17,7 @@ npm run lint | sweeper run               # piped stdin
 
 Runs the full lint-fix-retry loop:
 
-1. Executes a lint command (default: `golangci-lint run --out-format=line-number ./...`)
+1. Executes a lint command (default: `golangci-lint run ./...`)
 2. Parses output using multi-format detection (golangci-lint, generic `file:line:col`, minimal `file:line`, or raw fallback)
 3. Groups structured issues by file into parallel fix tasks
 4. Selects prompt strategy based on round number and file history (standard → retry → exploration)

@@ -20,7 +20,7 @@ cd /path/to/sweeper && go build -o sweeper . && export PATH="$PWD:$PATH"
 If no `sweeper.md` exists in the working directory, gather this information:
 
 1. **Target directory** - Which directory to lint (default: `.`)
-2. **Lint command** - What linter to run (default: `golangci-lint run --out-format=line-number ./...`)
+2. **Lint command** - What linter to run (default: `golangci-lint run ./...`)
 3. **Concurrency** - How many parallel sub-agents (default: `3`)
 4. **Max rounds** - Retry rounds before stopping (default: `3`)
 5. **VM mode** - Whether to isolate sub-agents in a stereOS VM (recommended for 5+ agents or sensitive repos)
