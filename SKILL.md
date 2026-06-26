@@ -1,6 +1,6 @@
 # Sweeper Agent Skill
 
-You are operating the **sweeper** tool, an AI-powered lint fixer that dispatches parallel Claude Code sub-agents to fix lint issues from any linter.
+You are operating the **sweeper** tool, an AI-powered code maintenance runner that dispatches parallel Claude Code sub-agents to fix lint issues, write or repair tests, improve documentation, and refactor code. It works on anything you can express as `file:line: message` output from any command.
 
 ## Quick Start
 
@@ -164,7 +164,7 @@ Fix the following lint issues in path/to/file.go:
 - Line 12: exported function Foo should have comment (golint)
 - Line 45: unnecessary conversion (unconvert)
 
-Fix each issue. Do not change behavior. Only fix lint issues. Commit nothing.
+Address each issue. Preserve existing behavior. Commit nothing.
 ```
 
 Multiple agents run concurrently across different files.
@@ -207,7 +207,7 @@ The following lint output was produced. Analyze it, identify the issues, and fix
 
 <full lint output>
 
-Fix each issue you can identify. Do not change behavior. Only fix lint issues. Commit nothing.
+Address each issue you can identify. Preserve existing behavior. Commit nothing.
 ```
 
 ## Telemetry

@@ -13,8 +13,9 @@ import (
 // Anthropic's agentic system usage requirements.
 const agentPreamble = "You are a sub-agent of Sweeper, an automated code maintenance tool. " +
 	"A human developer initiated this run and will review all changes. " +
-	"Your sole task is to fix lint issues in source code. " +
-	"Do not modify behavior, do not commit, and do not access external services.\n\n"
+	"Your task is to make the maintenance change described below — this may be fixing lint issues, " +
+	"writing or repairing tests, improving documentation, or refactoring code. " +
+	"Preserve the existing behavior of the code you change, do not commit, and do not access external services.\n\n"
 
 type Task struct {
 	ID        int
@@ -32,7 +33,7 @@ func BuildPrompt(task Task) string {
 	for _, iss := range task.Issues {
 		fmt.Fprintf(&b, "- Line %d: %s (%s)\n", iss.Line, iss.Message, iss.Linter)
 	}
-	b.WriteString("\nFix each issue. Do not change behavior. Only fix lint issues. Commit nothing.")
+	b.WriteString("\nAddress each issue. Preserve existing behavior. Commit nothing.")
 	return b.String()
 }
 
@@ -41,7 +42,7 @@ func BuildRawPrompt(task Task) string {
 	b.WriteString(agentPreamble)
 	b.WriteString("The following lint output was produced. Analyze it, identify the issues, and fix them:\n\n")
 	b.WriteString(task.RawOutput)
-	b.WriteString("\n\nFix each issue you can identify. Do not change behavior. Only fix lint issues. Commit nothing.")
+	b.WriteString("\n\nAddress each issue you can identify. Preserve existing behavior. Commit nothing.")
 	return b.String()
 }
 
@@ -56,7 +57,7 @@ func BuildRetryPrompt(task Task, priorOutput string) string {
 	}
 	b.WriteString("\nA previous attempt did not fully resolve these issues. Here is what was tried:\n\n")
 	b.WriteString(truncateOutput(priorOutput, 2000))
-	b.WriteString("\n\nTry a different approach. Do not repeat what was already tried. Fix each issue. Do not change behavior. Commit nothing.")
+	b.WriteString("\n\nTry a different approach. Do not repeat what was already tried. Address each issue. Preserve existing behavior. Commit nothing.")
 	return b.String()
 }
 
@@ -127,9 +128,9 @@ func BuildAPIExplorationPrompt(task Task, priorOutput string) string {
 	return b.String()
 }
 
-const apiDiffInstructions = "\n\nRespond ONLY with a unified diff that fixes these issues. " +
+const apiDiffInstructions = "\n\nRespond ONLY with a unified diff that resolves these issues. " +
 	"Wrap the diff in ```diff and ``` markers. " +
-	"Do not change behavior. Only fix lint issues. Commit nothing."
+	"Preserve existing behavior. Commit nothing."
 
 // maxFileContentSize caps file content included in API prompts to avoid
 // blowing up token limits or producing massive API bills.
