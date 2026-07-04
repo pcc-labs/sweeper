@@ -36,7 +36,13 @@ func applyEnvOverrides(tc *TOMLConfig) {
 	if v := os.Getenv("SWEEPER_PROVIDER_API_BASE"); v != "" {
 		tc.Provider.APIBase = v
 	}
-if v := os.Getenv("SWEEPER_TELEMETRY_BACKEND"); v != "" {
+	if v := os.Getenv("SWEEPER_ADVISOR_NAME"); v != "" {
+		tc.Advisor.Name = v
+	}
+	if v := os.Getenv("SWEEPER_ADVISOR_MODEL"); v != "" {
+		tc.Advisor.Model = v
+	}
+	if v := os.Getenv("SWEEPER_TELEMETRY_BACKEND"); v != "" {
 		tc.Telemetry.Backend = v
 	}
 	if v := os.Getenv("SWEEPER_TELEMETRY_DIR"); v != "" {
