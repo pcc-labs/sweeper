@@ -7,6 +7,7 @@ type TOMLConfig struct {
 	Version   int             `toml:"version"`
 	Run       RunConfig       `toml:"run"`
 	Provider  ProviderConfig  `toml:"provider"`
+	Advisor   AdvisorConfig   `toml:"advisor"`
 	Telemetry TelemetryConfig `toml:"telemetry"`
 	VM        VMSectionConfig `toml:"vm"`
 }
@@ -27,10 +28,16 @@ func (r RunConfig) ParseRateLimit() (time.Duration, error) {
 }
 
 type ProviderConfig struct {
-	Name         string   `toml:"name"`
-	Model        string   `toml:"model"`
-	APIBase      string   `toml:"api_base"`
+	Name    string `toml:"name"`
+	Model   string `toml:"model"`
+	APIBase string `toml:"api_base"`
+}
 
+// AdvisorConfig configures the optional sweep-planning advisor. When name or
+// model is set, a frontier model plans each round before workers dispatch.
+type AdvisorConfig struct {
+	Name  string `toml:"name"`  // provider name (claude, codex); defaults to "claude" when only model is set
+	Model string `toml:"model"` // e.g. "claude-opus-4-8"
 }
 
 type TelemetryConfig struct {
@@ -84,6 +91,8 @@ var TOMLConfigKeySet = map[string]bool{
 	"provider.model":                      true,
 	"provider.api_base":                   true,
 	"provider.allowed_tools":              true,
+	"advisor.name":                        true,
+	"advisor.model":                       true,
 	"telemetry.backend":                   true,
 	"telemetry.dir":                       true,
 	"telemetry.confluent.brokers":         true,

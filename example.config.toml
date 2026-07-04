@@ -26,6 +26,14 @@ name = "claude"
 # `paper start claude` so paper's gateway manages auth and captures the session
 # (no ANTHROPIC_API_KEY is used). No configuration is needed.
 
+# [advisor]
+# Optional sweep-planning phase: a frontier model plans each round (task
+# ordering, difficulty, strategy hints) before cheap workers execute fixes.
+# The advisor sees lint output and history only — never file contents.
+# Requires a CLI provider (claude, codex). Unset = disabled (mechanical plan).
+# name = "claude"
+# model = "claude-opus-4-8"
+
 [telemetry]
 # backend: "jsonl" (default, always active) or "confluent" (adds Kafka fan-out)
 backend = "jsonl"

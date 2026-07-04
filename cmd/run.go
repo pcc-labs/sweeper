@@ -30,6 +30,8 @@ func newRunCmd() *cobra.Command {
 	var providerName string
 	var providerModel string
 	var providerAPI string
+	var advisorProvider string
+	var advisorModel string
 	cmd := &cobra.Command{
 		Use:   "run [-- command ...]",
 		Short: "Run sweeper against target directory",
@@ -76,6 +78,12 @@ Examples:
 			}
 			if cmd.Flags().Changed("api-base") {
 				tc.Provider.APIBase = providerAPI
+			}
+			if cmd.Flags().Changed("advisor-provider") {
+				tc.Advisor.Name = advisorProvider
+			}
+			if cmd.Flags().Changed("advisor-model") {
+				tc.Advisor.Model = advisorModel
 			}
 
 			// Build runtime config from TOML.
@@ -194,6 +202,8 @@ Examples:
 	cmd.Flags().StringVar(&providerName, "provider", "claude", "AI provider (claude, codex, ollama)")
 	cmd.Flags().StringVar(&providerModel, "model", "", "model name for the provider (e.g. qwen2.5-coder:7b)")
 	cmd.Flags().StringVar(&providerAPI, "api-base", "", "API base URL for API providers (e.g. http://localhost:11434)")
+	cmd.Flags().StringVar(&advisorProvider, "advisor-provider", "", "provider for the sweep-planning advisor (claude, codex; enables the advisor phase)")
+	cmd.Flags().StringVar(&advisorModel, "advisor-model", "", "model for the sweep-planning advisor (e.g. claude-opus-4-8)")
 	return cmd
 }
 

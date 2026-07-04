@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/papercomputeco/sweeper/pkg/advisor"
 	"github.com/papercomputeco/sweeper/pkg/config"
 	"github.com/papercomputeco/sweeper/pkg/linter"
 	"github.com/papercomputeco/sweeper/pkg/loop"
@@ -40,6 +41,10 @@ type Agent struct {
 	pub          telemetry.Publisher
 	vm           VMManager
 	sessionPath  string
+
+	advisorExec     worker.Executor
+	advisorProvider string
+	advisorModel    string
 }
 
 type Option func(*Agent)
@@ -50,6 +55,13 @@ func WithLinterFunc(fn LinterFunc) Option {
 
 func WithExecutor(exec worker.Executor) Option {
 	return func(a *Agent) { a.executor = exec }
+}
+
+// WithAdvisorExecutor injects the executor used for the sweep-planning
+// advisor phase. Primarily for tests; production wiring resolves it from
+// the provider registry via cfg.AdvisorProvider/AdvisorModel.
+func WithAdvisorExecutor(exec worker.Executor) Option {
+	return func(a *Agent) { a.advisorExec = exec }
 }
 
 func WithVM(vm VMManager) Option {
@@ -87,6 +99,27 @@ func New(cfg config.Config, opts ...Option) *Agent {
 		fmt.Printf("Warning: unknown provider %q, falling back to claude\n", provName)
 		a.providerKind = provider.KindCLI
 		a.executor = worker.NewClaudeExecutor(worker.ClaudeConfig{Model: cfg.ProviderModel})
+	}
+
+	// Resolve the optional sweep-planning advisor. The advisor is a one-shot
+	// planning call, so it requires a CLI provider whose output is plain text
+	// (KindAPI executors apply diffs and cannot answer planning prompts).
+	if cfg.AdvisorProvider != "" || cfg.AdvisorModel != "" {
+		advName := cfg.AdvisorProvider
+		if advName == "" {
+			advName = "claude"
+		}
+		if cfg.VM {
+			fmt.Printf("Warning: advisor is not yet supported with --vm; advisor disabled\n")
+		} else if p, err := provider.Get(advName); err != nil {
+			fmt.Printf("Warning: unknown advisor provider %q, advisor disabled\n", advName)
+		} else if p.Kind != provider.KindCLI {
+			fmt.Printf("Warning: advisor requires a CLI provider, got %q; advisor disabled\n", advName)
+		} else {
+			a.advisorExec = p.NewExec(provider.Config{Model: cfg.AdvisorModel})
+			a.advisorProvider = advName
+			a.advisorModel = cfg.AdvisorModel
+		}
 	}
 
 	for _, opt := range opts {
@@ -171,12 +204,19 @@ func (a *Agent) runParsed(ctx context.Context, result linter.ParseResult, linter
 		}
 
 		fixTasks := planner.GroupByFile(issues)
+		var hints map[string]advisor.PlannedTask
+		if a.advisorExec != nil && !a.cfg.DryRun {
+			fixTasks, hints = a.advise(ctx, round, fixTasks, fileHistories)
+		}
 		tasks := make([]worker.Task, len(fixTasks))
 		strategies := make([]loop.Strategy, len(fixTasks))
 
 		for i, ft := range fixTasks {
 			fh := safeHistory(fileHistories[ft.File])
 			strategy := loop.PickStrategy(round, fh, a.cfg.StaleThreshold)
+			if hint, ok := hints[ft.File]; ok {
+				strategy = advisor.ResolveStrategy(hint.Strategy, round, fh, a.cfg.StaleThreshold)
+			}
 			strategies[i] = strategy
 
 			tasks[i] = worker.Task{
@@ -323,6 +363,41 @@ func (a *Agent) runRound(ctx context.Context, tasks []worker.Task) []worker.Resu
 		results = append(results, r)
 	}
 	return results
+}
+
+// advise runs the advisor phase for a round: build the planning prompt, run
+// the advisor executor, and overlay the plan on the mechanical grouping.
+// Every outcome is published as an advisor_plan event; on any failure the
+// mechanical plan is returned unchanged.
+func (a *Agent) advise(ctx context.Context, round int, tasks []planner.FixTask, histories map[string]*loop.FileHistory) ([]planner.FixTask, map[string]advisor.PlannedTask) {
+	start := time.Now()
+	hist := make(map[string]loop.FileHistory, len(histories))
+	for f, fh := range histories {
+		hist[f] = safeHistory(fh)
+	}
+
+	data := map[string]any{
+		"round":       round + 1,
+		"provider":    a.advisorProvider,
+		"model":       a.advisorModel,
+		"files_input": len(tasks),
+	}
+	plan, err := advisor.Advise(ctx, a.advisorExec, a.cfg.TargetDir, tasks, hist, round)
+	data["duration"] = time.Since(start).String()
+	if err != nil {
+		fmt.Printf("Warning: advisor failed (%v); using mechanical plan\n", err)
+		data["success"] = false
+		data["error"] = err.Error()
+		_ = a.pub.Publish(ctx, telemetry.Event{Timestamp: time.Now(), Type: "advisor_plan", Data: data})
+		return tasks, nil
+	}
+
+	ordered, hints := advisor.Apply(plan, tasks)
+	data["success"] = true
+	data["files_planned"] = len(plan.Tasks)
+	_ = a.pub.Publish(ctx, telemetry.Event{Timestamp: time.Now(), Type: "advisor_plan", Data: data})
+	fmt.Printf("Advisor planned %d tasks.\n", len(ordered))
+	return ordered, hints
 }
 
 func (a *Agent) publishFixAttempt(ctx context.Context, r worker.Result, linterName string, round int, strategy loop.Strategy) {
