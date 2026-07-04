@@ -8,6 +8,7 @@ type TOMLConfig struct {
 	Run       RunConfig       `toml:"run"`
 	Provider  ProviderConfig  `toml:"provider"`
 	Advisor   AdvisorConfig   `toml:"advisor"`
+	Worker    WorkerConfig    `toml:"worker"`
 	Telemetry TelemetryConfig `toml:"telemetry"`
 	VM        VMSectionConfig `toml:"vm"`
 }
@@ -31,6 +32,24 @@ type ProviderConfig struct {
 	Name    string `toml:"name"`
 	Model   string `toml:"model"`
 	APIBase string `toml:"api_base"`
+}
+
+// WorkerConfig configures the fix-executing worker role. It mirrors
+// [provider] (which remains as a back-compat alias); non-empty worker
+// fields win over the provider section.
+type WorkerConfig struct {
+	Name       string           `toml:"name"`
+	Model      string           `toml:"model"`
+	APIBase    string           `toml:"api_base"`
+	Escalation EscalationConfig `toml:"escalation"`
+}
+
+// EscalationConfig defines the model escalation ladder: rungs above the
+// base worker, tried in order when a file stagnates. Each entry is a model
+// name, optionally prefixed with a registered provider ("claude/model");
+// bare entries run on the worker's provider.
+type EscalationConfig struct {
+	Ladder []string `toml:"ladder"`
 }
 
 // AdvisorConfig configures the optional sweep-planning advisor. When name or
@@ -93,6 +112,10 @@ var TOMLConfigKeySet = map[string]bool{
 	"provider.allowed_tools":              true,
 	"advisor.name":                        true,
 	"advisor.model":                       true,
+	"worker.name":                         true,
+	"worker.model":                        true,
+	"worker.api_base":                     true,
+	"worker.escalation.ladder":            true,
 	"telemetry.backend":                   true,
 	"telemetry.dir":                       true,
 	"telemetry.confluent.brokers":         true,

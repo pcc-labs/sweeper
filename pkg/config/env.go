@@ -42,6 +42,18 @@ func applyEnvOverrides(tc *TOMLConfig) {
 	if v := os.Getenv("SWEEPER_ADVISOR_MODEL"); v != "" {
 		tc.Advisor.Model = v
 	}
+	if v := os.Getenv("SWEEPER_WORKER_NAME"); v != "" {
+		tc.Worker.Name = v
+	}
+	if v := os.Getenv("SWEEPER_WORKER_MODEL"); v != "" {
+		tc.Worker.Model = v
+	}
+	if v := os.Getenv("SWEEPER_WORKER_API_BASE"); v != "" {
+		tc.Worker.APIBase = v
+	}
+	if v := os.Getenv("SWEEPER_WORKER_ESCALATION_LADDER"); v != "" {
+		tc.Worker.Escalation.Ladder = strings.Split(v, ",")
+	}
 	if v := os.Getenv("SWEEPER_TELEMETRY_BACKEND"); v != "" {
 		tc.Telemetry.Backend = v
 	}

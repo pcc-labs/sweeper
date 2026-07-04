@@ -132,7 +132,6 @@ func TestFromTOMLInvalidRateLimit(t *testing.T) {
 	}
 }
 
-
 func TestFromTOMLVMFields(t *testing.T) {
 	tc := NewDefaultTOMLConfig()
 	tc.VM.Enabled = true
