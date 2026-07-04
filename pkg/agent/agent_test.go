@@ -1076,6 +1076,31 @@ func TestAgentAdvisorStrategyHintUsed(t *testing.T) {
 	}
 }
 
+func TestAgentAdvisorSkippedInDryRun(t *testing.T) {
+	cfg := config.Config{
+		TargetDir:    t.TempDir(),
+		Concurrency:  1,
+		TelemetryDir: t.TempDir(),
+		DryRun:       true,
+	}
+	issues := []linter.Issue{{File: "a.go", Line: 1, Linter: "revive", Message: "m1"}}
+	fakeLinter := func(ctx context.Context, dir string) (linter.ParseResult, error) {
+		return linter.ParseResult{Issues: issues, Parsed: true}, nil
+	}
+	advisorCalled := false
+	advisorExec := func(ctx context.Context, task worker.Task) worker.Result {
+		advisorCalled = true
+		return worker.Result{Success: true, Output: `{"tasks":[{"file":"a.go"}]}`}
+	}
+	a := New(cfg, WithLinterFunc(fakeLinter), WithAdvisorExecutor(advisorExec))
+	if _, err := a.Run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if advisorCalled {
+		t.Error("expected advisor not to run under --dry-run")
+	}
+}
+
 func TestNewAgentAdvisorRequiresCLIProvider(t *testing.T) {
 	cfg := config.Config{
 		TargetDir:       t.TempDir(),
@@ -1101,5 +1126,20 @@ func TestNewAgentAdvisorModelOnlyDefaultsToClaude(t *testing.T) {
 	a := New(cfg)
 	if a.advisorExec == nil {
 		t.Error("expected advisor enabled when only model is set (provider defaults to claude)")
+	}
+}
+
+func TestNewAgentAdvisorDisabledInVMMode(t *testing.T) {
+	cfg := config.Config{
+		TargetDir:    t.TempDir(),
+		Concurrency:  1,
+		TelemetryDir: t.TempDir(),
+		Provider:     "claude",
+		AdvisorModel: "claude-opus-4-8",
+		VM:           true,
+	}
+	a := New(cfg)
+	if a.advisorExec != nil {
+		t.Error("expected advisor disabled in VM mode")
 	}
 }

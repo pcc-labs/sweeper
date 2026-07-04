@@ -109,7 +109,9 @@ func New(cfg config.Config, opts ...Option) *Agent {
 		if advName == "" {
 			advName = "claude"
 		}
-		if p, err := provider.Get(advName); err != nil {
+		if cfg.VM {
+			fmt.Printf("Warning: advisor is not yet supported with --vm; advisor disabled\n")
+		} else if p, err := provider.Get(advName); err != nil {
 			fmt.Printf("Warning: unknown advisor provider %q, advisor disabled\n", advName)
 		} else if p.Kind != provider.KindCLI {
 			fmt.Printf("Warning: advisor requires a CLI provider, got %q; advisor disabled\n", advName)
@@ -203,7 +205,7 @@ func (a *Agent) runParsed(ctx context.Context, result linter.ParseResult, linter
 
 		fixTasks := planner.GroupByFile(issues)
 		var hints map[string]advisor.PlannedTask
-		if a.advisorExec != nil {
+		if a.advisorExec != nil && !a.cfg.DryRun {
 			fixTasks, hints = a.advise(ctx, round, fixTasks, fileHistories)
 		}
 		tasks := make([]worker.Task, len(fixTasks))
