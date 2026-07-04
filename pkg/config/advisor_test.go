@@ -41,6 +41,10 @@ func TestEnvOverridesAdvisor(t *testing.T) {
 }
 
 func TestLoadTOMLAdvisorSection(t *testing.T) {
+	// Point HOME at an empty fake home dir so os.UserHomeDir() resolves to it
+	// and the test is not polluted by a real ~/.sweeper/config.toml.
+	t.Setenv("HOME", t.TempDir())
+
 	dir := t.TempDir()
 	dotdir := filepath.Join(dir, ".sweeper")
 	if err := os.MkdirAll(dotdir, 0o755); err != nil {
