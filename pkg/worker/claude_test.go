@@ -67,7 +67,7 @@ func TestClaudeExecutorUsesTaskPrompt(t *testing.T) {
 		},
 		Prompt: customPrompt,
 	}
-	result := NewClaudeExecutor()(context.Background(), task)
+	result := NewClaudeExecutor(ClaudeConfig{})(context.Background(), task)
 	if !result.Success {
 		t.Fatalf("expected success, got error: %s", result.Error)
 	}
@@ -93,7 +93,7 @@ func TestClaudeExecutorFallsBackToBuildPrompt(t *testing.T) {
 		},
 		// Prompt intentionally left empty
 	}
-	result := NewClaudeExecutor()(context.Background(), task)
+	result := NewClaudeExecutor(ClaudeConfig{})(context.Background(), task)
 	if !result.Success {
 		t.Fatalf("expected success, got error: %s", result.Error)
 	}
@@ -114,7 +114,7 @@ func TestClaudeExecutorLaunchesViaPaper(t *testing.T) {
 
 	prompt := "fix the thing"
 	task := Task{ID: 0, File: "test.go", Dir: t.TempDir(), Prompt: prompt}
-	result := NewClaudeExecutor()(context.Background(), task)
+	result := NewClaudeExecutor(ClaudeConfig{})(context.Background(), task)
 	if !result.Success {
 		t.Fatalf("expected success, got error: %s", result.Error)
 	}
@@ -164,7 +164,7 @@ func TestClaudeExecutorSuccess(t *testing.T) {
 			{File: "test.go", Line: 1, Message: "unused var", Linter: "revive"},
 		},
 	}
-	result := NewClaudeExecutor()(context.Background(), task)
+	result := NewClaudeExecutor(ClaudeConfig{})(context.Background(), task)
 	if !result.Success {
 		t.Errorf("expected success, got error: %s", result.Error)
 	}
@@ -192,7 +192,7 @@ func TestClaudeExecutorError(t *testing.T) {
 			{File: "test.go", Line: 1, Message: "unused var", Linter: "revive"},
 		},
 	}
-	result := NewClaudeExecutor()(context.Background(), task)
+	result := NewClaudeExecutor(ClaudeConfig{})(context.Background(), task)
 	if result.Success {
 		t.Error("expected failure")
 	}
@@ -201,5 +201,63 @@ func TestClaudeExecutorError(t *testing.T) {
 	}
 	if result.Error == "" {
 		t.Error("expected error message")
+	}
+}
+
+func TestClaudeExecutorPassesModelFlag(t *testing.T) {
+	dir := t.TempDir()
+	fakeClaude := filepath.Join(dir, "claude")
+	if err := os.WriteFile(fakeClaude, []byte("#!/bin/sh\necho \"$@\""), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir)
+
+	task := Task{ID: 0, File: "test.go", Dir: t.TempDir(), Prompt: "fix it"}
+	result := NewClaudeExecutor(ClaudeConfig{Model: "claude-haiku-4-5"})(context.Background(), task)
+	if !result.Success {
+		t.Fatalf("expected success, got error: %s", result.Error)
+	}
+	if !strings.Contains(result.Output, "--model claude-haiku-4-5") {
+		t.Errorf("expected --model flag passed to claude, got: %s", result.Output)
+	}
+	if result.Model != "claude-haiku-4-5" {
+		t.Errorf("expected result.Model recorded, got %q", result.Model)
+	}
+}
+
+func TestClaudeExecutorOmitsModelFlagWhenUnset(t *testing.T) {
+	dir := t.TempDir()
+	fakeClaude := filepath.Join(dir, "claude")
+	if err := os.WriteFile(fakeClaude, []byte("#!/bin/sh\necho \"$@\""), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir)
+
+	task := Task{ID: 0, File: "test.go", Dir: t.TempDir(), Prompt: "fix it"}
+	result := NewClaudeExecutor(ClaudeConfig{})(context.Background(), task)
+	if !result.Success {
+		t.Fatalf("expected success, got error: %s", result.Error)
+	}
+	if strings.Contains(result.Output, "--model") {
+		t.Errorf("expected no --model flag when model unset, got: %s", result.Output)
+	}
+}
+
+func TestClaudeExecutorPassesExtraArgs(t *testing.T) {
+	dir := t.TempDir()
+	fakeClaude := filepath.Join(dir, "claude")
+	if err := os.WriteFile(fakeClaude, []byte("#!/bin/sh\necho \"$@\""), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir)
+
+	task := Task{ID: 0, File: "test.go", Dir: t.TempDir(), Prompt: "fix it"}
+	cfg := ClaudeConfig{ExtraArgs: []string{"--allowedTools", "Read,Edit"}}
+	result := NewClaudeExecutor(cfg)(context.Background(), task)
+	if !result.Success {
+		t.Fatalf("expected success, got error: %s", result.Error)
+	}
+	if !strings.Contains(result.Output, "--allowedTools Read,Edit") {
+		t.Errorf("expected extra args passed through, got: %s", result.Output)
 	}
 }

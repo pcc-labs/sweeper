@@ -86,7 +86,7 @@ func New(cfg config.Config, opts ...Option) *Agent {
 	} else {
 		fmt.Printf("Warning: unknown provider %q, falling back to claude\n", provName)
 		a.providerKind = provider.KindCLI
-		a.executor = worker.NewClaudeExecutor()
+		a.executor = worker.NewClaudeExecutor(worker.ClaudeConfig{Model: cfg.ProviderModel})
 	}
 
 	for _, opt := range opts {

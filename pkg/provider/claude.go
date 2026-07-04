@@ -7,7 +7,10 @@ func init() {
 		Name: "claude",
 		Kind: KindCLI,
 		NewExec: func(cfg Config) worker.Executor {
-			return worker.NewClaudeExecutor()
+			return worker.NewClaudeExecutor(worker.ClaudeConfig{
+				Model:     cfg.Model,
+				ExtraArgs: cfg.ExtraArgs,
+			})
 		},
 	})
 }

@@ -39,25 +39,36 @@ func childEnv() []string {
 // CLI is available the agent is launched via `paper start claude` so paper's
 // gateway manages authentication and captures the session; otherwise it falls
 // back to invoking claude directly (using claude's own login, without capture).
-func claudeCommand(ctx context.Context, prompt string) *exec.Cmd {
-	args := []string{"--print", "--dangerously-skip-permissions", prompt}
+func claudeCommand(ctx context.Context, cfg ClaudeConfig, prompt string) *exec.Cmd {
+	args := []string{"--print", "--dangerously-skip-permissions"}
+	if cfg.Model != "" {
+		args = append(args, "--model", cfg.Model)
+	}
+	args = append(args, cfg.ExtraArgs...)
+	args = append(args, prompt)
 	if paperPath, err := exec.LookPath("paper"); err == nil {
 		return exec.CommandContext(ctx, paperPath, append([]string{"start", "claude", "--"}, args...)...)
 	}
 	return exec.CommandContext(ctx, "claude", args...)
 }
 
+// ClaudeConfig holds settings for the claude executor.
+type ClaudeConfig struct {
+	Model     string   // e.g. "claude-haiku-4-5"; empty uses the CLI's default
+	ExtraArgs []string // additional CLI arguments passed before the prompt
+}
+
 // NewClaudeExecutor returns an Executor that runs claude sub-agents through
 // paper (when available) with the Anthropic auth env stripped, so authentication
 // is handled by paper's gateway rather than an inherited API token.
-func NewClaudeExecutor() Executor {
+func NewClaudeExecutor(cfg ClaudeConfig) Executor {
 	return func(ctx context.Context, task Task) Result {
 		start := time.Now()
 		prompt := task.Prompt
 		if prompt == "" {
 			prompt = BuildPrompt(task)
 		}
-		cmd := claudeCommand(ctx, prompt)
+		cmd := claudeCommand(ctx, cfg, prompt)
 		cmd.Dir = task.Dir
 		cmd.Env = childEnv()
 		out, err := cmd.CombinedOutput()
@@ -66,13 +77,13 @@ func NewClaudeExecutor() Executor {
 			return Result{
 				TaskID: task.ID, File: task.File, Success: false,
 				Output: string(out), Error: err.Error(), Duration: duration,
-				Provider: "claude",
+				Provider: "claude", Model: cfg.Model,
 			}
 		}
 		return Result{
 			TaskID: task.ID, File: task.File, Success: true,
 			Output: string(out), Duration: duration, IssuesFix: len(task.Issues),
-			Provider: "claude",
+			Provider: "claude", Model: cfg.Model,
 		}
 	}
 }
