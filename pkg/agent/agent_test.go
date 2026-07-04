@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/papercomputeco/sweeper/pkg/config"
@@ -899,4 +900,206 @@ func (f *fakePublisher) Publish(_ context.Context, _ telemetry.Event) error {
 func (f *fakePublisher) Close() error {
 	f.closed = true
 	return nil
+}
+
+type capturePublisher struct {
+	events []telemetry.Event
+}
+
+func (p *capturePublisher) Publish(ctx context.Context, e telemetry.Event) error {
+	p.events = append(p.events, e)
+	return nil
+}
+func (p *capturePublisher) Close() error { return nil }
+
+// advisorAgentConfig returns a config with two files' worth of issues and
+// concurrency 1 so dispatch order is observable.
+func advisorAgentTestSetup() (config.Config, LinterFunc) {
+	cfg := config.Config{
+		TargetDir:    ".",
+		Concurrency:  1,
+		TelemetryDir: "",
+	}
+	issues := []linter.Issue{
+		{File: "a.go", Line: 1, Linter: "revive", Message: "m1"},
+		{File: "b.go", Line: 2, Linter: "revive", Message: "m2"},
+	}
+	fakeLinter := func(ctx context.Context, dir string) (linter.ParseResult, error) {
+		return linter.ParseResult{Issues: issues, Parsed: true}, nil
+	}
+	return cfg, fakeLinter
+}
+
+func TestAgentAdvisorReordersDispatch(t *testing.T) {
+	cfg, fakeLinter := advisorAgentTestSetup()
+	cfg.TelemetryDir = t.TempDir()
+
+	advisorExec := func(ctx context.Context, task worker.Task) worker.Result {
+		return worker.Result{Success: true,
+			Output: `{"tasks":[{"file":"b.go"},{"file":"a.go"}]}`}
+	}
+	var mu sync.Mutex
+	ids := make(map[string]int)
+	workerExec := func(ctx context.Context, task worker.Task) worker.Result {
+		mu.Lock()
+		ids[task.File] = task.ID
+		mu.Unlock()
+		return worker.Result{TaskID: task.ID, File: task.File, Success: true, IssuesFix: 1}
+	}
+	a := New(cfg, WithLinterFunc(fakeLinter), WithExecutor(workerExec), WithAdvisorExecutor(advisorExec))
+	if _, err := a.Run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	// worker.Pool.RunStream spawns all task goroutines immediately and lets
+	// them race for the semaphore, so execution order is nondeterministic
+	// even at Concurrency 1. What is deterministic is the worker.Task.ID
+	// assigned by position in the advisor-reordered slice: since the
+	// advisor moved b.go before a.go, b.go must get ID 0 and a.go ID 1.
+	mu.Lock()
+	defer mu.Unlock()
+	if ids["b.go"] != 0 || ids["a.go"] != 1 {
+		t.Errorf("expected advisor reorder to assign b.go=0 a.go=1, got %v", ids)
+	}
+}
+
+func TestAgentAdvisorFallbackOnGarbage(t *testing.T) {
+	cfg, fakeLinter := advisorAgentTestSetup()
+	cfg.TelemetryDir = t.TempDir()
+
+	advisorExec := func(ctx context.Context, task worker.Task) worker.Result {
+		return worker.Result{Success: true, Output: "not json"}
+	}
+	var mu sync.Mutex
+	ids := make(map[string]int)
+	workerExec := func(ctx context.Context, task worker.Task) worker.Result {
+		mu.Lock()
+		ids[task.File] = task.ID
+		mu.Unlock()
+		return worker.Result{TaskID: task.ID, File: task.File, Success: true, IssuesFix: 1}
+	}
+	a := New(cfg, WithLinterFunc(fakeLinter), WithExecutor(workerExec), WithAdvisorExecutor(advisorExec))
+	summary, err := a.Run(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	// worker.Pool.RunStream races all tasks for the semaphore, so execution
+	// order is nondeterministic. What's deterministic is the mechanical
+	// (sorted-by-file) plan's assignment of worker.Task.ID: a.go=0, b.go=1.
+	mu.Lock()
+	defer mu.Unlock()
+	if ids["a.go"] != 0 || ids["b.go"] != 1 {
+		t.Errorf("expected mechanical fallback to assign a.go=0 b.go=1, got %v", ids)
+	}
+	if summary.Fixed != 2 {
+		t.Errorf("expected 2 fixed despite advisor failure, got %d", summary.Fixed)
+	}
+}
+
+func TestAgentAdvisorPublishesPlanEvent(t *testing.T) {
+	cfg, fakeLinter := advisorAgentTestSetup()
+	cfg.TelemetryDir = t.TempDir()
+
+	advisorExec := func(ctx context.Context, task worker.Task) worker.Result {
+		return worker.Result{Success: true,
+			Output: `{"tasks":[{"file":"a.go"},{"file":"b.go"}]}`}
+	}
+	workerExec := func(ctx context.Context, task worker.Task) worker.Result {
+		return worker.Result{TaskID: task.ID, File: task.File, Success: true, IssuesFix: 1}
+	}
+	pub := &capturePublisher{}
+	a := New(cfg, WithLinterFunc(fakeLinter), WithExecutor(workerExec),
+		WithAdvisorExecutor(advisorExec), WithPublisher(pub))
+	if _, err := a.Run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	var planEvents []telemetry.Event
+	for _, e := range pub.events {
+		if e.Type == "advisor_plan" {
+			planEvents = append(planEvents, e)
+		}
+	}
+	if len(planEvents) != 1 {
+		t.Fatalf("expected 1 advisor_plan event, got %d", len(planEvents))
+	}
+	d := planEvents[0].Data
+	if d["success"] != true {
+		t.Errorf("expected success=true, got %v", d["success"])
+	}
+	if d["files_input"] != 2 || d["files_planned"] != 2 {
+		t.Errorf("expected files_input=2 files_planned=2, got %v / %v", d["files_input"], d["files_planned"])
+	}
+}
+
+func TestAgentAdvisorStrategyHintUsed(t *testing.T) {
+	// Two rounds; worker never fixes; stale-threshold 99 so the mechanical
+	// pick can never reach exploration. Round 2's advisor hint must be the
+	// only way the exploration prompt appears.
+	dir := t.TempDir()
+	cfg := config.Config{
+		TargetDir:      dir,
+		Concurrency:    1,
+		TelemetryDir:   t.TempDir(),
+		MaxRounds:      2,
+		StaleThreshold: 99,
+	}
+	issues := []linter.Issue{{File: "a.go", Line: 1, Linter: "revive", Message: "m1"}}
+	fakeLinter := func(ctx context.Context, dir string) (linter.ParseResult, error) {
+		return linter.ParseResult{Issues: issues, Parsed: true}, nil
+	}
+	round := 0
+	advisorExec := func(ctx context.Context, task worker.Task) worker.Result {
+		round++
+		strategy := "standard"
+		if round > 1 {
+			strategy = "exploration"
+		}
+		return worker.Result{Success: true,
+			Output: `{"tasks":[{"file":"a.go","strategy":"` + strategy + `"}]}`}
+	}
+	var prompts []string
+	workerExec := func(ctx context.Context, task worker.Task) worker.Result {
+		prompts = append(prompts, task.Prompt)
+		return worker.Result{TaskID: task.ID, File: task.File, Success: true, IssuesFix: 0}
+	}
+	a := New(cfg, WithLinterFunc(fakeLinter), WithExecutor(workerExec), WithAdvisorExecutor(advisorExec))
+	if _, err := a.Run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(prompts) != 2 {
+		t.Fatalf("expected 2 worker prompts, got %d", len(prompts))
+	}
+	if strings.Contains(prompts[0], "Consider refactoring") {
+		t.Error("round 1 should be standard, not exploration")
+	}
+	if !strings.Contains(prompts[1], "Consider refactoring") {
+		t.Error("round 2 advisor hint should produce the exploration prompt")
+	}
+}
+
+func TestNewAgentAdvisorRequiresCLIProvider(t *testing.T) {
+	cfg := config.Config{
+		TargetDir:       t.TempDir(),
+		Concurrency:     1,
+		TelemetryDir:    t.TempDir(),
+		Provider:        "claude",
+		AdvisorProvider: "ollama", // KindAPI — cannot advise
+	}
+	a := New(cfg)
+	if a.advisorExec != nil {
+		t.Error("expected advisor disabled for KindAPI provider")
+	}
+}
+
+func TestNewAgentAdvisorModelOnlyDefaultsToClaude(t *testing.T) {
+	cfg := config.Config{
+		TargetDir:    t.TempDir(),
+		Concurrency:  1,
+		TelemetryDir: t.TempDir(),
+		Provider:     "claude",
+		AdvisorModel: "claude-opus-4-8",
+	}
+	a := New(cfg)
+	if a.advisorExec == nil {
+		t.Error("expected advisor enabled when only model is set (provider defaults to claude)")
+	}
 }
