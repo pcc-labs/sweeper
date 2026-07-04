@@ -57,6 +57,12 @@ This matters because the orchestrator's context window stays small and predictab
 
 Sub-agents are fire-and-forget. Each one gets a prompt with the lint issues for its file, does the work, and exits. If it fails, the orchestrator knows from the exit code and can retry with an escalated strategy on the next round. No conversation state carries over between rounds, which keeps each attempt clean.
 
+## Advisor Phase
+
+With an advisor configured, each round starts with a one-shot planning call to a frontier model. The advisor receives the lint output and per-file round history — never file contents — and returns a structured plan: task ordering, per-file difficulty, and strategy hints. Workers then execute fixes in the planned order on whatever (cheaper) provider/model you configured. If the advisor fails, times out, or returns an unparseable plan, the round falls back to the mechanical file grouping and continues.
+
+Every advisor call is recorded as an `advisor_plan` telemetry event, so `sweeper observe` can compare advised runs against mechanical ones.
+
 ## Setup
 
 ### Go CLI (standalone)
@@ -68,6 +74,7 @@ go install github.com/papercomputeco/sweeper@latest
 sweeper run                              # default: golangci-lint with claude
 sweeper run --provider codex             # use OpenAI Codex CLI instead
 sweeper run --provider ollama --model qwen2.5-coder:7b  # local model via Ollama
+sweeper run --advisor-model claude-opus-4-8 --provider ollama --model qwen2.5-coder:7b  # frontier model plans, local model fixes
 sweeper run --vm -c 3 --max-rounds 3    # VM isolation, 3 agents, 3 rounds
 sweeper run -- npm run lint              # any linter
 sweeper observe                          # review success rates + token spend
