@@ -1143,3 +1143,75 @@ func TestNewAgentAdvisorDisabledInVMMode(t *testing.T) {
 		t.Error("expected advisor disabled in VM mode")
 	}
 }
+
+func TestNewAgentBuildsLadderFromConfig(t *testing.T) {
+	cfg := config.Config{
+		TargetDir:        t.TempDir(),
+		Concurrency:      1,
+		TelemetryDir:     t.TempDir(),
+		Provider:         "claude",
+		EscalationLadder: []string{"claude-haiku-4-5", "claude/claude-sonnet-5"},
+	}
+	a := New(cfg)
+	if len(a.ladder) != 2 {
+		t.Fatalf("expected 2 rungs, got %d", len(a.ladder))
+	}
+	if a.ladder[0].Provider != "claude" || a.ladder[0].Model != "claude-haiku-4-5" {
+		t.Errorf("unexpected rung 1: %+v", a.ladder[0])
+	}
+	if a.ladder[1].Provider != "claude" || a.ladder[1].Model != "claude-sonnet-5" {
+		t.Errorf("unexpected rung 2: %+v", a.ladder[1])
+	}
+	if a.ladder[0].Kind != provider.KindCLI {
+		t.Errorf("expected KindCLI rung, got %v", a.ladder[0].Kind)
+	}
+	if a.ladder[0].Exec == nil {
+		t.Error("expected rung executor constructed")
+	}
+}
+
+func TestNewAgentLadderDisabledInVMMode(t *testing.T) {
+	cfg := config.Config{
+		TargetDir:        t.TempDir(),
+		Concurrency:      1,
+		TelemetryDir:     t.TempDir(),
+		Provider:         "claude",
+		EscalationLadder: []string{"claude-haiku-4-5"},
+		VM:               true,
+	}
+	a := New(cfg)
+	if a.ladder != nil {
+		t.Error("expected ladder disabled in VM mode")
+	}
+}
+
+func TestNewAgentLadderEmptyEntryDisablesLadder(t *testing.T) {
+	cfg := config.Config{
+		TargetDir:        t.TempDir(),
+		Concurrency:      1,
+		TelemetryDir:     t.TempDir(),
+		Provider:         "claude",
+		EscalationLadder: []string{"claude-haiku-4-5", "  "},
+	}
+	a := New(cfg)
+	if a.ladder != nil {
+		t.Error("expected ladder disabled when an entry is blank")
+	}
+}
+
+func TestRungExecutorZeroIsBase(t *testing.T) {
+	base := func(ctx context.Context, task worker.Task) worker.Result {
+		return worker.Result{File: "base"}
+	}
+	rung1 := func(ctx context.Context, task worker.Task) worker.Result {
+		return worker.Result{File: "rung1"}
+	}
+	cfg := config.Config{TargetDir: t.TempDir(), Concurrency: 1, TelemetryDir: t.TempDir()}
+	a := New(cfg, WithExecutor(base), WithLadder([]LadderRung{{Exec: rung1, Kind: provider.KindCLI, Provider: "claude", Model: "m1"}}))
+	if got := a.rungExecutor(0)(context.Background(), worker.Task{}); got.File != "base" {
+		t.Errorf("rung 0 should be the base executor, got %s", got.File)
+	}
+	if got := a.rungExecutor(1)(context.Background(), worker.Task{}); got.File != "rung1" {
+		t.Errorf("rung 1 should be the ladder executor, got %s", got.File)
+	}
+}

@@ -20,6 +20,15 @@ import (
 
 type LinterFunc func(ctx context.Context, dir string) (linter.ParseResult, error)
 
+// LadderRung is one escalation step above the base worker: a pooled
+// executor plus the metadata needed to route prompts and telemetry.
+type LadderRung struct {
+	Exec     worker.Executor
+	Kind     provider.Kind
+	Provider string
+	Model    string
+}
+
 // VMManager is the interface for VM lifecycle management.
 type VMManager interface {
 	Shutdown() error
@@ -45,6 +54,7 @@ type Agent struct {
 	advisorExec     worker.Executor
 	advisorProvider string
 	advisorModel    string
+	ladder          []LadderRung
 }
 
 type Option func(*Agent)
@@ -62,6 +72,12 @@ func WithExecutor(exec worker.Executor) Option {
 // the provider registry via cfg.AdvisorProvider/AdvisorModel.
 func WithAdvisorExecutor(exec worker.Executor) Option {
 	return func(a *Agent) { a.advisorExec = exec }
+}
+
+// WithLadder injects escalation rungs 1..N above the base executor.
+// Primarily for tests; production wiring parses cfg.EscalationLadder.
+func WithLadder(rungs []LadderRung) Option {
+	return func(a *Agent) { a.ladder = rungs }
 }
 
 func WithVM(vm VMManager) Option {
@@ -119,6 +135,42 @@ func New(cfg config.Config, opts ...Option) *Agent {
 			a.advisorExec = p.NewExec(provider.Config{Model: cfg.AdvisorModel})
 			a.advisorProvider = advName
 			a.advisorModel = cfg.AdvisorModel
+		}
+	}
+
+	// Resolve the escalation ladder: rungs above the base worker, climbed
+	// per file on stagnation. Executors are constructed once and reused.
+	if len(cfg.EscalationLadder) > 0 {
+		if cfg.VM {
+			fmt.Printf("Warning: escalation ladder is not yet supported with --vm; ladder disabled\n")
+		} else {
+			rungs := make([]LadderRung, 0, len(cfg.EscalationLadder))
+			for _, entry := range cfg.EscalationLadder {
+				entry = strings.TrimSpace(entry)
+				if entry == "" {
+					fmt.Printf("Warning: empty escalation ladder entry; ladder disabled\n")
+					rungs = nil
+					break
+				}
+				rungProv, rungModel := provider.ParseRung(entry, provName)
+				p, err := provider.Get(rungProv)
+				if err != nil {
+					fmt.Printf("Warning: escalation rung %q: %v; ladder disabled\n", entry, err)
+					rungs = nil
+					break
+				}
+				apiBase := ""
+				if rungProv == provName {
+					apiBase = cfg.ProviderAPI
+				}
+				rungs = append(rungs, LadderRung{
+					Exec:     p.NewExec(provider.Config{Model: rungModel, APIBase: apiBase}),
+					Kind:     p.Kind,
+					Provider: rungProv,
+					Model:    rungModel,
+				})
+			}
+			a.ladder = rungs
 		}
 	}
 
@@ -363,6 +415,22 @@ func (a *Agent) runRound(ctx context.Context, tasks []worker.Task) []worker.Resu
 		results = append(results, r)
 	}
 	return results
+}
+
+// rungExecutor returns the executor for a rung; rung 0 is the base worker.
+func (a *Agent) rungExecutor(rung int) worker.Executor {
+	if rung <= 0 || rung > len(a.ladder) {
+		return a.executor
+	}
+	return a.ladder[rung-1].Exec
+}
+
+// rungKind returns the provider kind for a rung; rung 0 is the base worker.
+func (a *Agent) rungKind(rung int) provider.Kind {
+	if rung <= 0 || rung > len(a.ladder) {
+		return a.providerKind
+	}
+	return a.ladder[rung-1].Kind
 }
 
 // advise runs the advisor phase for a round: build the planning prompt, run
