@@ -9,6 +9,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+
+	"github.com/papercomputeco/sweeper/pkg/planner"
 )
 
 // PlannedTask is one file's entry in the advisor's sweep plan.
@@ -59,4 +61,34 @@ func jsonCandidates(out string) []string {
 		}
 	}
 	return candidates
+}
+
+// Apply overlays the advisor's plan on the mechanically-grouped tasks.
+// Tasks are reordered to match the plan; files the plan omits keep their
+// mechanical order at the end; files the plan invents are dropped. The
+// returned map carries per-file hints for files the plan covered.
+func Apply(plan Plan, tasks []planner.FixTask) ([]planner.FixTask, map[string]PlannedTask) {
+	byFile := make(map[string]planner.FixTask, len(tasks))
+	for _, t := range tasks {
+		byFile[t.File] = t
+	}
+
+	ordered := make([]planner.FixTask, 0, len(tasks))
+	hints := make(map[string]PlannedTask)
+	taken := make(map[string]bool, len(tasks))
+	for _, pt := range plan.Tasks {
+		t, ok := byFile[pt.File]
+		if !ok || taken[pt.File] {
+			continue
+		}
+		taken[pt.File] = true
+		ordered = append(ordered, t)
+		hints[pt.File] = pt
+	}
+	for _, t := range tasks {
+		if !taken[t.File] {
+			ordered = append(ordered, t)
+		}
+	}
+	return ordered, hints
 }
