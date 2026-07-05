@@ -264,6 +264,13 @@ func (a *Agent) runParsed(ctx context.Context, result linter.ParseResult, linter
 		var hints map[string]advisor.PlannedTask
 		if a.advisorExec != nil && !a.cfg.DryRun {
 			fixTasks, hints = a.advise(ctx, round, fixTasks, fileHistories)
+			if esc != nil {
+				for file, hint := range hints {
+					if idx := a.rungIndexForModel(hint.Tier); idx > 0 {
+						esc.Seed(file, idx)
+					}
+				}
+			}
 		}
 		tasks := make([]worker.Task, len(fixTasks))
 		strategies := make([]loop.Strategy, len(fixTasks))
@@ -454,6 +461,21 @@ func (a *Agent) rungExecutor(rung int) worker.Executor {
 	return a.ladder[rung-1].Exec
 }
 
+// rungIndexForModel maps an advisor tier hint to a ladder rung index
+// (1-based; 0 means no match). Hints match a rung's model name exactly or
+// as "provider/model".
+func (a *Agent) rungIndexForModel(tier string) int {
+	if tier == "" {
+		return 0
+	}
+	for i, r := range a.ladder {
+		if tier == r.Model || tier == r.Provider+"/"+r.Model {
+			return i + 1
+		}
+	}
+	return 0
+}
+
 // rungKind returns the provider kind for a rung; rung 0 is the base worker.
 func (a *Agent) rungKind(rung int) provider.Kind {
 	if rung <= 0 || rung > len(a.ladder) {
@@ -479,7 +501,11 @@ func (a *Agent) advise(ctx context.Context, round int, tasks []planner.FixTask, 
 		"model":       a.advisorModel,
 		"files_input": len(tasks),
 	}
-	plan, err := advisor.Advise(ctx, a.advisorExec, a.cfg.TargetDir, tasks, hist, round)
+	tiers := make([]string, 0, len(a.ladder))
+	for _, r := range a.ladder {
+		tiers = append(tiers, r.Model)
+	}
+	plan, err := advisor.Advise(ctx, a.advisorExec, a.cfg.TargetDir, tasks, hist, round, tiers)
 	data["duration"] = time.Since(start).String()
 	if err != nil {
 		fmt.Printf("Warning: advisor failed (%v); using mechanical plan\n", err)

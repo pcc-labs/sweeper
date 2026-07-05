@@ -14,7 +14,7 @@ func TestAdviseParsesExecutorOutput(t *testing.T) {
 		gotTask = task
 		return worker.Result{Success: true, Output: `{"tasks":[{"file":"a.go","difficulty":"easy"}]}`}
 	}
-	plan, err := Advise(context.Background(), exec, "/repo", fixTasks("a.go"), nil, 0)
+	plan, err := Advise(context.Background(), exec, "/repo", fixTasks("a.go"), nil, 0, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -33,7 +33,7 @@ func TestAdviseErrorsOnExecutorFailure(t *testing.T) {
 	exec := func(ctx context.Context, task worker.Task) worker.Result {
 		return worker.Result{Success: false, Error: "exit status 1"}
 	}
-	if _, err := Advise(context.Background(), exec, ".", fixTasks("a.go"), nil, 0); err == nil {
+	if _, err := Advise(context.Background(), exec, ".", fixTasks("a.go"), nil, 0, nil); err == nil {
 		t.Error("expected error when executor fails")
 	}
 }
@@ -42,7 +42,7 @@ func TestAdviseErrorsOnGarbageOutput(t *testing.T) {
 	exec := func(ctx context.Context, task worker.Task) worker.Result {
 		return worker.Result{Success: true, Output: "I refuse to answer in JSON."}
 	}
-	if _, err := Advise(context.Background(), exec, ".", fixTasks("a.go"), nil, 0); err == nil {
+	if _, err := Advise(context.Background(), exec, ".", fixTasks("a.go"), nil, 0, nil); err == nil {
 		t.Error("expected error on unparseable output")
 	}
 }
@@ -54,7 +54,21 @@ func TestAdviseAppliesTimeout(t *testing.T) {
 		}
 		return worker.Result{Success: true, Output: `{"tasks":[{"file":"a.go"}]}`}
 	}
-	if _, err := Advise(context.Background(), exec, ".", fixTasks("a.go"), nil, 0); err != nil {
+	if _, err := Advise(context.Background(), exec, ".", fixTasks("a.go"), nil, 0, nil); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestAdvisePassesTiersToPrompt(t *testing.T) {
+	var gotPrompt string
+	exec := func(ctx context.Context, task worker.Task) worker.Result {
+		gotPrompt = task.Prompt
+		return worker.Result{Success: true, Output: `{"tasks":[{"file":"a.go"}]}`}
+	}
+	if _, err := Advise(context.Background(), exec, ".", fixTasks("a.go"), nil, 0, []string{"tier-x"}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(gotPrompt, "tier-x") {
+		t.Errorf("expected tiers threaded into the prompt, got: %s", gotPrompt)
 	}
 }

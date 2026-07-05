@@ -1360,3 +1360,74 @@ func TestFilterRetryableNilEscalationMatchesOldBehavior(t *testing.T) {
 		t.Errorf("expected old drop behavior with nil escalation, got %d issues", len(got))
 	}
 }
+
+func TestAgentAdvisorTierSeedsStartingRung(t *testing.T) {
+	cfg := config.Config{
+		TargetDir:    t.TempDir(),
+		Concurrency:  1,
+		TelemetryDir: t.TempDir(),
+	}
+	issues := []linter.Issue{{File: "a.go", Line: 1, Linter: "revive", Message: "m1"}}
+	fakeLinter := func(ctx context.Context, dir string) (linter.ParseResult, error) {
+		return linter.ParseResult{Issues: issues, Parsed: true}, nil
+	}
+	advisorExec := func(ctx context.Context, task worker.Task) worker.Result {
+		return worker.Result{Success: true,
+			Output: `{"tasks":[{"file":"a.go","tier":"claude-sonnet-5"}]}`}
+	}
+	var mu sync.Mutex
+	var baseCalls, rung1Calls, rung2Calls []string
+	base := func(ctx context.Context, task worker.Task) worker.Result {
+		mu.Lock()
+		baseCalls = append(baseCalls, task.File)
+		mu.Unlock()
+		return worker.Result{TaskID: task.ID, File: task.File, Success: true, IssuesFix: 1}
+	}
+	a := New(cfg, WithLinterFunc(fakeLinter), WithExecutor(base),
+		WithAdvisorExecutor(advisorExec),
+		WithLadder([]LadderRung{
+			ladderTestRung(t, "claude-haiku-4-5", &rung1Calls, &mu),
+			ladderTestRung(t, "claude-sonnet-5", &rung2Calls, &mu),
+		}))
+	if _, err := a.Run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	// Tier hint names rung 2's model, so round 1 dispatches there directly.
+	if len(rung2Calls) != 1 || rung2Calls[0] != "a.go" {
+		t.Errorf("expected round 1 seeded onto rung 2, got base=%v rung1=%v rung2=%v",
+			baseCalls, rung1Calls, rung2Calls)
+	}
+}
+
+func TestAgentAdvisorUnknownTierIgnored(t *testing.T) {
+	cfg := config.Config{
+		TargetDir:    t.TempDir(),
+		Concurrency:  1,
+		TelemetryDir: t.TempDir(),
+	}
+	issues := []linter.Issue{{File: "a.go", Line: 1, Linter: "revive", Message: "m1"}}
+	fakeLinter := func(ctx context.Context, dir string) (linter.ParseResult, error) {
+		return linter.ParseResult{Issues: issues, Parsed: true}, nil
+	}
+	advisorExec := func(ctx context.Context, task worker.Task) worker.Result {
+		return worker.Result{Success: true,
+			Output: `{"tasks":[{"file":"a.go","tier":"gpt-42-ultra"}]}`}
+	}
+	var mu sync.Mutex
+	var baseCalls, rung1Calls []string
+	base := func(ctx context.Context, task worker.Task) worker.Result {
+		mu.Lock()
+		baseCalls = append(baseCalls, task.File)
+		mu.Unlock()
+		return worker.Result{TaskID: task.ID, File: task.File, Success: true, IssuesFix: 1}
+	}
+	a := New(cfg, WithLinterFunc(fakeLinter), WithExecutor(base),
+		WithAdvisorExecutor(advisorExec),
+		WithLadder([]LadderRung{ladderTestRung(t, "claude-haiku-4-5", &rung1Calls, &mu)}))
+	if _, err := a.Run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(baseCalls) != 1 || len(rung1Calls) != 0 {
+		t.Errorf("expected unknown tier ignored (base dispatch), got base=%v rung1=%v", baseCalls, rung1Calls)
+	}
+}
