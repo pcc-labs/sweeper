@@ -69,6 +69,43 @@ func TestEnvOverridesWorker(t *testing.T) {
 	}
 }
 
+// TestEnvWorkerBeatsEnvProviderWhenBothSet pins the ordering when both the
+// new SWEEPER_WORKER_* and legacy SWEEPER_PROVIDER_* env vars are set: the
+// more specific SWEEPER_WORKER_* value must win, even though
+// SWEEPER_PROVIDER_* is now mirrored into tc.Worker.* as well.
+func TestEnvWorkerBeatsEnvProviderWhenBothSet(t *testing.T) {
+	t.Setenv("SWEEPER_PROVIDER_NAME", "env-provider")
+	t.Setenv("SWEEPER_PROVIDER_MODEL", "env-provider-model")
+	t.Setenv("SWEEPER_PROVIDER_API_BASE", "http://env-provider:1")
+	t.Setenv("SWEEPER_WORKER_NAME", "env-worker")
+	t.Setenv("SWEEPER_WORKER_MODEL", "env-worker-model")
+	t.Setenv("SWEEPER_WORKER_API_BASE", "http://env-worker:2")
+
+	tc := NewDefaultTOMLConfig()
+	applyEnvOverrides(&tc)
+
+	if tc.Worker.Name != "env-worker" {
+		t.Errorf("expected SWEEPER_WORKER_NAME to win, got %q", tc.Worker.Name)
+	}
+	if tc.Worker.Model != "env-worker-model" {
+		t.Errorf("expected SWEEPER_WORKER_MODEL to win, got %q", tc.Worker.Model)
+	}
+	if tc.Worker.APIBase != "http://env-worker:2" {
+		t.Errorf("expected SWEEPER_WORKER_API_BASE to win, got %q", tc.Worker.APIBase)
+	}
+
+	// Sanity: the legacy [provider] section still reflects the env override
+	// too (mirrored, not lost).
+	if tc.Provider.Name != "env-provider" {
+		t.Errorf("expected tc.Provider.Name to reflect SWEEPER_PROVIDER_NAME, got %q", tc.Provider.Name)
+	}
+
+	cfg := FromTOML(tc)
+	if cfg.Provider != "env-worker" || cfg.ProviderModel != "env-worker-model" || cfg.ProviderAPI != "http://env-worker:2" {
+		t.Errorf("expected final config to prefer worker env values, got %q/%q/%q", cfg.Provider, cfg.ProviderModel, cfg.ProviderAPI)
+	}
+}
+
 func TestLoadTOMLWorkerSection(t *testing.T) {
 	t.Setenv("HOME", t.TempDir()) // isolate from ~/.sweeper/config.toml
 	dir := t.TempDir()

@@ -27,14 +27,23 @@ func applyEnvOverrides(tc *TOMLConfig) {
 			tc.Run.StaleThreshold = n
 		}
 	}
+	// SWEEPER_PROVIDER_* mirrors into both tc.Provider.* and tc.Worker.*,
+	// matching the CLI flag pattern in cmd/run.go. This is required because
+	// FromTOML's merge (pkg/config/config.go firstNonEmpty) prefers
+	// tc.Worker.* over tc.Provider.*, so a project [worker] TOML section
+	// would otherwise beat an env override. SWEEPER_WORKER_* below is
+	// applied after this block, so it still wins when both are set.
 	if v := os.Getenv("SWEEPER_PROVIDER_NAME"); v != "" {
 		tc.Provider.Name = v
+		tc.Worker.Name = v
 	}
 	if v := os.Getenv("SWEEPER_PROVIDER_MODEL"); v != "" {
 		tc.Provider.Model = v
+		tc.Worker.Model = v
 	}
 	if v := os.Getenv("SWEEPER_PROVIDER_API_BASE"); v != "" {
 		tc.Provider.APIBase = v
+		tc.Worker.APIBase = v
 	}
 	if v := os.Getenv("SWEEPER_ADVISOR_NAME"); v != "" {
 		tc.Advisor.Name = v
