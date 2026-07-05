@@ -161,7 +161,7 @@ Examples:
 				if cfg.VMName != "" {
 					vmHandle := vm.Attach(cfg.VMName, absTarget)
 					opts = append(opts, agent.WithVM(vmHandle))
-					opts = append(opts, agent.WithExecutor(worker.NewVMExecutor(vmHandle)))
+					opts = append(opts, agent.WithExecutor(worker.NewVMExecutor(vmHandle, worker.VMExecConfig{Model: cfg.ProviderModel})))
 					fmt.Printf("VM: using existing VM %s\n", cfg.VMName)
 				} else {
 					name := vm.NewVMName()
@@ -174,7 +174,7 @@ Examples:
 						return fmt.Errorf("booting VM: %w", err)
 					}
 					opts = append(opts, agent.WithVM(vmHandle))
-					opts = append(opts, agent.WithExecutor(worker.NewVMExecutor(vmHandle)))
+					opts = append(opts, agent.WithExecutor(worker.NewVMExecutor(vmHandle, worker.VMExecConfig{Model: cfg.ProviderModel})))
 					fmt.Printf("VM: booted %s (managed, will teardown on exit)\n", name)
 				}
 			}
