@@ -65,7 +65,7 @@ Every advisor call is recorded as an `advisor_plan` telemetry event, so `sweeper
 
 ## Model Escalation
 
-With a `[worker.escalation]` ladder configured, files that stop improving climb to stronger models instead of just stronger prompts. Round 0 runs everything on the base worker (cheap, often local). When a file stagnates for `stale_threshold` rounds, sweeper switches it to the exploration prompt *and* moves it up one rung — e.g. `qwen2.5-coder:7b` → `claude-haiku-4-5` → `claude-sonnet-5`. A file is only abandoned after exploration has been tried at the top rung.
+With a `[worker.escalation]` ladder configured, files that stop improving climb to stronger models instead of just stronger prompts. The first round runs everything on the base worker (cheap, often local). When a file stagnates for `stale_threshold` rounds, sweeper switches it to the exploration prompt *and* moves it up one rung — e.g. `qwen2.5-coder:7b` → `claude-haiku-4-5` → `claude-sonnet-5`. A file is only abandoned after exploration has been tried at the top rung.
 
 When both an advisor and a ladder are configured, the advisor is told the available tiers and can pin a gnarly file to a stronger starting rung via its `tier` hint.
 
