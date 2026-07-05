@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -101,6 +102,19 @@ func defaultLinterFunc(ctx context.Context, dir string) (linter.ParseResult, err
 	return linter.Run(ctx, dir)
 }
 
+// unknownProviderEndpoints returns the [providers.<name>] keys that don't
+// name a registered provider, sorted for deterministic warnings.
+func unknownProviderEndpoints(endpoints map[string]string) []string {
+	var unknown []string
+	for name := range endpoints {
+		if _, err := provider.Get(name); err != nil {
+			unknown = append(unknown, name)
+		}
+	}
+	sort.Strings(unknown)
+	return unknown
+}
+
 func New(cfg config.Config, opts ...Option) *Agent {
 	a := &Agent{
 		cfg:      cfg,
@@ -174,6 +188,12 @@ func New(cfg config.Config, opts ...Option) *Agent {
 		}
 	}
 
+	// A [providers.<name>] section that matches no registered provider is
+	// never consulted (typically a typo); warn instead of failing silently.
+	for _, name := range unknownProviderEndpoints(cfg.ProviderEndpoints) {
+		fmt.Printf("Warning: [providers.%s] does not match a registered provider (available: %v); section ignored\n", name, provider.Available())
+	}
+
 	// Resolve the escalation ladder: rungs above the base worker, climbed
 	// per file on stagnation. Executors are constructed once and reused.
 	// Under --vm rungs run inside the VM, which only supports claude models;
@@ -211,9 +231,15 @@ func New(cfg config.Config, opts ...Option) *Agent {
 					rungs = nil
 					break
 				}
+				// A rung on the worker's own provider inherits its api_base;
+				// otherwise (or when unset) [providers.<name>] supplies the
+				// endpoint, falling back to the provider default when absent.
 				apiBase := ""
 				if rungProv == provName {
 					apiBase = cfg.ProviderAPI
+				}
+				if apiBase == "" {
+					apiBase = cfg.ProviderEndpoints[rungProv]
 				}
 				rungs = append(rungs, LadderRung{
 					Exec:     p.NewExec(provider.Config{Model: rungModel, APIBase: apiBase}),

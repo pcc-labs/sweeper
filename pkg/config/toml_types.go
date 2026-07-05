@@ -4,13 +4,22 @@ import "time"
 
 // TOMLConfig is the top-level config parsed from .sweeper/config.toml.
 type TOMLConfig struct {
-	Version   int             `toml:"version"`
-	Run       RunConfig       `toml:"run"`
-	Provider  ProviderConfig  `toml:"provider"`
-	Advisor   AdvisorConfig   `toml:"advisor"`
-	Worker    WorkerConfig    `toml:"worker"`
-	Telemetry TelemetryConfig `toml:"telemetry"`
-	VM        VMSectionConfig `toml:"vm"`
+	Version   int                         `toml:"version"`
+	Run       RunConfig                   `toml:"run"`
+	Provider  ProviderConfig              `toml:"provider"`
+	Advisor   AdvisorConfig               `toml:"advisor"`
+	Worker    WorkerConfig                `toml:"worker"`
+	Providers map[string]ProviderEndpoint `toml:"providers"`
+	Telemetry TelemetryConfig             `toml:"telemetry"`
+	VM        VMSectionConfig             `toml:"vm"`
+}
+
+// ProviderEndpoint holds per-provider connection settings, keyed by provider
+// name under [providers.<name>]. Consulted wherever an executor is built for
+// that provider without a more specific api_base — notably escalation-ladder
+// rungs on a provider other than the worker's.
+type ProviderEndpoint struct {
+	APIBase string `toml:"api_base"`
 }
 
 type RunConfig struct {
@@ -100,22 +109,24 @@ func NewDefaultTOMLConfig() TOMLConfig {
 }
 
 var TOMLConfigKeySet = map[string]bool{
-	"version":                             true,
-	"run.concurrency":                     true,
-	"run.rate_limit":                      true,
-	"run.max_rounds":                      true,
-	"run.stale_threshold":                 true,
-	"run.dry_run":                         true,
-	"provider.name":                       true,
-	"provider.model":                      true,
-	"provider.api_base":                   true,
-	"provider.allowed_tools":              true,
-	"advisor.name":                        true,
-	"advisor.model":                       true,
-	"worker.name":                         true,
-	"worker.model":                        true,
-	"worker.api_base":                     true,
-	"worker.escalation.ladder":            true,
+	"version":                  true,
+	"run.concurrency":          true,
+	"run.rate_limit":           true,
+	"run.max_rounds":           true,
+	"run.stale_threshold":      true,
+	"run.dry_run":              true,
+	"provider.name":            true,
+	"provider.model":           true,
+	"provider.api_base":        true,
+	"provider.allowed_tools":   true,
+	"advisor.name":             true,
+	"advisor.model":            true,
+	"worker.name":              true,
+	"worker.model":             true,
+	"worker.api_base":          true,
+	"worker.escalation.ladder": true,
+	// [providers.<name>] keys are dynamic (keyed by provider name) and
+	// cannot be enumerated here; the section's leaf key is api_base.
 	"telemetry.backend":                   true,
 	"telemetry.dir":                       true,
 	"telemetry.confluent.brokers":         true,
