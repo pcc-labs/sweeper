@@ -108,3 +108,31 @@ func TestJSONLPublisherImplementsInterface(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestJSONLPublisherPath(t *testing.T) {
+	dir := t.TempDir()
+	pub := NewJSONLPublisher(dir)
+
+	got := pub.Path()
+	if filepath.Dir(got) != dir {
+		t.Errorf("Path() dir = %q, want %q", filepath.Dir(got), dir)
+	}
+	want := time.Now().Format("2006-01-02") + ".jsonl"
+	if filepath.Base(got) != want {
+		t.Errorf("Path() base = %q, want %q", filepath.Base(got), want)
+	}
+}
+
+func TestJSONLPublisherPathMatchesPublishedFile(t *testing.T) {
+	dir := t.TempDir()
+	pub := NewJSONLPublisher(dir)
+	defer func() { _ = pub.Close() }()
+
+	if err := pub.Publish(context.Background(), Event{Type: "test"}); err != nil {
+		t.Fatalf("publish: %v", err)
+	}
+
+	if _, err := os.Stat(pub.Path()); err != nil {
+		t.Errorf("Path() %q does not point at the published file: %v", pub.Path(), err)
+	}
+}

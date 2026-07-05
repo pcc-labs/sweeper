@@ -13,6 +13,7 @@ import (
 type JSONLPublisher struct {
 	dir  string
 	file *os.File
+	path string
 	mu   sync.Mutex
 }
 
@@ -28,12 +29,26 @@ func (p *JSONLPublisher) ensureFile() error {
 		return nil
 	}
 	name := time.Now().Format("2006-01-02") + ".jsonl"
-	f, err := os.OpenFile(filepath.Join(p.dir, name), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
+	path := filepath.Join(p.dir, name)
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
 	if err != nil {
 		return err
 	}
 	p.file = f
+	p.path = path
 	return nil
+}
+
+// Path returns the JSONL file this publisher writes to: the open file's path,
+// or the file that would be created for today's date if nothing has been
+// published yet.
+func (p *JSONLPublisher) Path() string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.path != "" {
+		return p.path
+	}
+	return filepath.Join(p.dir, time.Now().Format("2006-01-02")+".jsonl")
 }
 
 func (p *JSONLPublisher) Publish(_ context.Context, event Event) error {
