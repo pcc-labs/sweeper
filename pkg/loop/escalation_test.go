@@ -54,6 +54,17 @@ func TestEscalationZeroTopAlwaysAtTop(t *testing.T) {
 	}
 }
 
+func TestEscalationTop(t *testing.T) {
+	e := NewEscalation(3)
+	if e.Top() != 3 {
+		t.Errorf("expected top 3, got %d", e.Top())
+	}
+	e0 := NewEscalation(0)
+	if e0.Top() != 0 {
+		t.Errorf("expected top 0, got %d", e0.Top())
+	}
+}
+
 func TestEscalationFilesIndependent(t *testing.T) {
 	e := NewEscalation(2)
 	e.Bump("a.go")

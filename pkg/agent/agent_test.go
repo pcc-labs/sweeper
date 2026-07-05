@@ -451,7 +451,7 @@ func TestFilterRetryableIssues(t *testing.T) {
 	histories := map[string]*loop.FileHistory{
 		"a.go": {File: "a.go", Rounds: []loop.RoundResult{{Fixed: 0}, {Fixed: 0}}},
 	}
-	explored := map[string]bool{"a.go": true}
+	explored := map[string]int{"a.go": 0}
 
 	result := filterRetryableIssues(issues, histories, explored, 2, nil)
 	if len(result) != 1 {
@@ -469,7 +469,7 @@ func TestFilterRetryableIssuesNoExploration(t *testing.T) {
 	histories := map[string]*loop.FileHistory{
 		"a.go": {File: "a.go", Rounds: []loop.RoundResult{{Fixed: 0}, {Fixed: 0}}},
 	}
-	explored := map[string]bool{}
+	explored := map[string]int{}
 
 	result := filterRetryableIssues(issues, histories, explored, 2, nil)
 	if len(result) != 1 {
@@ -1335,17 +1335,51 @@ func TestFilterRetryableKeepsStagnantFileBelowTop(t *testing.T) {
 	histories := map[string]*loop.FileHistory{
 		"a.go": {File: "a.go", Rounds: []loop.RoundResult{{Fixed: 0}, {Fixed: 0}}},
 	}
-	attempted := map[string]bool{"a.go": true}
 	esc := loop.NewEscalation(2)
-	esc.Bump("a.go") // rung 1 of 2 — one rung left
-	got := filterRetryableIssues(issues, histories, attempted, 1, esc)
+	rung := esc.Bump("a.go") // rung 1 of 2 — one rung left; exploration dispatched here
+	explorationRungs := map[string]int{"a.go": rung}
+	got := filterRetryableIssues(issues, histories, explorationRungs, 1, esc)
 	if len(got) != 1 {
 		t.Errorf("expected stagnant file kept while below top rung, got %d issues", len(got))
 	}
-	esc.Bump("a.go") // now at top
-	got = filterRetryableIssues(issues, histories, attempted, 1, esc)
+	rung = esc.Bump("a.go") // now at top; exploration dispatched at the top rung
+	explorationRungs["a.go"] = rung
+	got = filterRetryableIssues(issues, histories, explorationRungs, 1, esc)
 	if len(got) != 0 {
 		t.Errorf("expected stagnant file dropped at top rung, got %d issues", len(got))
+	}
+}
+
+// TestFilterRetryableKeepsFileSeededToTopWithoutTopRungExploration is the
+// RED case for the exploration-tracking bug: a file explores at a LOW rung,
+// is later seeded straight to the TOP rung (e.g. by an advisor tier hint)
+// without exploration ever having been dispatched there, and goes stagnant.
+// The documented invariant is "the file survives until exploration has been
+// attempted at the TOP rung" — tracking only the file's current rung (as
+// esc.AtTop did) would wrongly drop it the moment the seed lands on top.
+func TestFilterRetryableKeepsFileSeededToTopWithoutTopRungExploration(t *testing.T) {
+	issues := []linter.Issue{{File: "a.go", Line: 1, Linter: "revive", Message: "m"}}
+	histories := map[string]*loop.FileHistory{
+		"a.go": {File: "a.go", Rounds: []loop.RoundResult{{Fixed: 0}, {Fixed: 0}}},
+	}
+	esc := loop.NewEscalation(2)
+	lowRung := esc.Bump("a.go") // exploration dispatched at rung 1 only
+	explorationRungs := map[string]int{"a.go": lowRung}
+
+	esc.Seed("a.go", 2) // advisor tier hint seeds straight to the top rung;
+	// no exploration has run there yet.
+
+	got := filterRetryableIssues(issues, histories, explorationRungs, 1, esc)
+	if len(got) != 1 {
+		t.Errorf("expected file kept: exploration never ran at the top rung (esc.Rung=%d, recorded=%d), got %d issues",
+			esc.Rung("a.go"), explorationRungs["a.go"], len(got))
+	}
+
+	// Once exploration actually runs at the top rung, the file may be dropped.
+	explorationRungs["a.go"] = esc.Top()
+	got = filterRetryableIssues(issues, histories, explorationRungs, 1, esc)
+	if len(got) != 0 {
+		t.Errorf("expected file dropped once exploration has run at the top rung, got %d issues", len(got))
 	}
 }
 
@@ -1354,8 +1388,8 @@ func TestFilterRetryableNilEscalationMatchesOldBehavior(t *testing.T) {
 	histories := map[string]*loop.FileHistory{
 		"a.go": {File: "a.go", Rounds: []loop.RoundResult{{Fixed: 0}, {Fixed: 0}}},
 	}
-	attempted := map[string]bool{"a.go": true}
-	got := filterRetryableIssues(issues, histories, attempted, 1, nil)
+	explorationRungs := map[string]int{"a.go": 0}
+	got := filterRetryableIssues(issues, histories, explorationRungs, 1, nil)
 	if len(got) != 0 {
 		t.Errorf("expected old drop behavior with nil escalation, got %d issues", len(got))
 	}
@@ -1429,5 +1463,72 @@ func TestAgentAdvisorUnknownTierIgnored(t *testing.T) {
 	}
 	if len(baseCalls) != 1 || len(rung1Calls) != 0 {
 		t.Errorf("expected unknown tier ignored (base dispatch), got base=%v rung1=%v", baseCalls, rung1Calls)
+	}
+}
+
+// TestAdvisorExplorationHintDoesNotBumpWithoutStagnation is the RED case for
+// the bump-gating bug: advisor.ResolveStrategy honors an "exploration" hint
+// whenever history exists, with no stagnation check. Round 1 makes progress
+// (Fixed>0, not stagnant); round 2's advisor hint forces "exploration"
+// anyway. The exploration prompt may still be honored, but the ladder must
+// NOT climb — escalation is stagnation-triggered, not hint-triggered.
+func TestAdvisorExplorationHintDoesNotBumpWithoutStagnation(t *testing.T) {
+	dir := t.TempDir()
+	cfg := config.Config{
+		TargetDir:      dir,
+		Concurrency:    1,
+		TelemetryDir:   t.TempDir(),
+		MaxRounds:      2,
+		StaleThreshold: 2,
+	}
+	callCount := 0
+	issuesRound1 := []linter.Issue{
+		{File: "a.go", Line: 1, Linter: "revive", Message: "m1"},
+		{File: "a.go", Line: 5, Linter: "revive", Message: "m2"},
+	}
+	issuesRound2 := []linter.Issue{
+		{File: "a.go", Line: 5, Linter: "revive", Message: "m2"},
+	}
+	fakeLinter := func(ctx context.Context, dir string) (linter.ParseResult, error) {
+		callCount++
+		if callCount == 1 {
+			return linter.ParseResult{Issues: issuesRound1, Parsed: true}, nil
+		}
+		return linter.ParseResult{Issues: issuesRound2, Parsed: true}, nil
+	}
+	advisorRound := 0
+	advisorExec := func(ctx context.Context, task worker.Task) worker.Result {
+		advisorRound++
+		if advisorRound == 1 {
+			return worker.Result{Success: true, Output: `{"tasks":[{"file":"a.go"}]}`}
+		}
+		// Round 2: advisor forces "exploration" even though round 1 made
+		// progress (Fixed>0 => not stagnant).
+		return worker.Result{Success: true, Output: `{"tasks":[{"file":"a.go","strategy":"exploration"}]}`}
+	}
+	base := func(ctx context.Context, task worker.Task) worker.Result {
+		return worker.Result{TaskID: task.ID, File: task.File, Success: true, IssuesFix: 1}
+	}
+	pub := &capturePublisher{}
+	a := New(cfg, WithLinterFunc(fakeLinter), WithExecutor(base),
+		WithAdvisorExecutor(advisorExec),
+		WithLadder([]LadderRung{{Kind: provider.KindCLI, Provider: "claude", Model: "m1", Exec: base}}),
+		WithPublisher(pub))
+	if _, err := a.Run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	var rungs []int
+	for _, e := range pub.events {
+		if e.Type == "fix_attempt" {
+			if r, ok := e.Data["rung"].(int); ok {
+				rungs = append(rungs, r)
+			}
+		}
+	}
+	if len(rungs) != 2 {
+		t.Fatalf("expected 2 fix_attempt events, got %d: %v", len(rungs), rungs)
+	}
+	if rungs[1] != 0 {
+		t.Errorf("expected round 2 rung to stay 0 (advisor exploration hint without stagnation must not bump), got %d", rungs[1])
 	}
 }

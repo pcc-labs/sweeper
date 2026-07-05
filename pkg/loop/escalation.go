@@ -21,6 +21,11 @@ func (e *Escalation) Rung(file string) int {
 	return e.rungs[file]
 }
 
+// Top returns the ladder's top rung index.
+func (e *Escalation) Top() int {
+	return e.top
+}
+
 // Seed raises the file's starting rung (e.g. from an advisor tier hint).
 // It never demotes, and caps at the top rung.
 func (e *Escalation) Seed(file string, rung int) {

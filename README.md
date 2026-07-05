@@ -69,6 +69,8 @@ With a `[worker.escalation]` ladder configured, files that stop improving climb 
 
 When both an advisor and a ladder are configured, the advisor is told the available tiers and can pin a gnarly file to a stronger starting rung via its `tier` hint.
 
+A rung on a provider other than the worker's uses that provider's default endpoint; `api_base` only applies to the worker's own provider.
+
 Every `fix_attempt` telemetry event records the model and rung, and `sweeper observe` reports success rate and token spend per tier — so you learn which rung is cost-effective for which class of issue.
 
 ## Setup

@@ -38,6 +38,8 @@ name = "claude"
 # stagnation (stale_threshold non-improving rounds), keeping the exploration
 # prompt. Entries are "model" (runs on the worker's provider) or
 # "provider/model". A file is only given up on after exploring at the top rung.
+# A rung on a different provider than the worker uses that provider's default
+# endpoint; api_base above only applies to the worker's own provider.
 # ladder = ["claude/claude-haiku-4-5", "claude/claude-sonnet-5"]
 
 # [advisor]

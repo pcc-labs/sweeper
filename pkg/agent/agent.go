@@ -248,7 +248,11 @@ func (a *Agent) runParsed(ctx context.Context, result linter.ParseResult, linter
 
 	summary := Summary{TotalIssues: len(issues)}
 	fileHistories := make(map[string]*loop.FileHistory)
-	explorationAttempted := make(map[string]bool)
+	// explorationRungs records, per file, the HIGHEST rung at which
+	// exploration has been dispatched. Presence (not the value) distinguishes
+	// "never explored" from "explored at rung 0" — check with the
+	// comma-ok form, not a zero-value sentinel.
+	explorationRungs := make(map[string]int)
 
 	var esc *loop.Escalation
 	if len(a.ladder) > 0 {
@@ -286,7 +290,12 @@ func (a *Agent) runParsed(ctx context.Context, result linter.ParseResult, linter
 
 			rung := 0
 			if esc != nil {
-				if strategy == loop.StrategyExploration {
+				// Only a stagnant file may climb the ladder: an advisor
+				// exploration hint alone (ResolveStrategy honors it whenever
+				// history exists) must not burn a rung on a file that is
+				// still improving. The exploration prompt is still honored
+				// either way — only the ladder climb is gated.
+				if strategy == loop.StrategyExploration && loop.DetectStagnation(fh, a.cfg.StaleThreshold) {
 					rung = esc.Bump(ft.File)
 					if a.ladder[rung-1].Model != "" {
 						fmt.Printf("  escalating %s to %s\n", ft.File, a.ladder[rung-1].Model)
@@ -305,7 +314,9 @@ func (a *Agent) runParsed(ctx context.Context, result linter.ParseResult, linter
 			}
 			tasks[i].Prompt = a.buildPromptForKind(a.rungKind(rung), tasks[i], strategy, fh.LastOutput())
 			if strategy == loop.StrategyExploration {
-				explorationAttempted[ft.File] = true
+				if prev, ok := explorationRungs[ft.File]; !ok || rung > prev {
+					explorationRungs[ft.File] = rung
+				}
 			}
 		}
 
@@ -431,7 +442,7 @@ func (a *Agent) runParsed(ctx context.Context, result linter.ParseResult, linter
 		}
 
 		// Filter to retryable issues
-		issues = filterRetryableIssues(reResult.Issues, fileHistories, explorationAttempted, a.cfg.StaleThreshold, esc)
+		issues = filterRetryableIssues(reResult.Issues, fileHistories, explorationRungs, a.cfg.StaleThreshold, esc)
 
 		if a.sessionPath != "" {
 			_ = session.UpdateStatus(a.sessionPath, round+1, len(reResult.Issues), summary.Fixed, len(issues))
@@ -653,18 +664,21 @@ func safeHistory(fh *loop.FileHistory) loop.FileHistory {
 // filterRetryableIssues removes issues for files that have exhausted all
 // strategies. Without a ladder, a file is removed once exploration was
 // attempted and it is still stagnant. With a ladder, the file survives
-// until exploration has been attempted at the TOP rung.
+// until exploration has been attempted at the TOP rung — not merely until
+// the file's current rung is the top rung (a seed or bump can reach the top
+// rung without exploration ever having been dispatched there).
 func filterRetryableIssues(
 	issues []linter.Issue,
 	histories map[string]*loop.FileHistory,
-	explorationAttempted map[string]bool,
+	explorationRungs map[string]int,
 	staleThreshold int,
 	esc *loop.Escalation,
 ) []linter.Issue {
 	var retryable []linter.Issue
 	for _, iss := range issues {
-		stagnant := explorationAttempted[iss.File] && loop.DetectStagnation(safeHistory(histories[iss.File]), staleThreshold)
-		if stagnant && (esc == nil || esc.AtTop(iss.File)) {
+		rung, explored := explorationRungs[iss.File]
+		stagnant := explored && loop.DetectStagnation(safeHistory(histories[iss.File]), staleThreshold)
+		if stagnant && (esc == nil || rung >= esc.Top()) {
 			continue
 		}
 		retryable = append(retryable, iss)
