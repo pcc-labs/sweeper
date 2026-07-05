@@ -424,8 +424,11 @@ func (a *Agent) runParsed(ctx context.Context, result linter.ParseResult, linter
 		results := a.runRound(ctx, tasks, exec)
 		summary.Rounds = round + 1
 
-		for i, r := range results {
-			strategy := strategies[i]
+		// Results stream back in completion order, not task order, so all
+		// per-file state must be keyed by TaskID (a tasks-slice index),
+		// never by results loop index.
+		for _, r := range results {
+			strategy := strategies[r.TaskID]
 			a.publishFixAttempt(ctx, r, linterName, round, strategy, rungs[r.TaskID])
 
 			// Update file history
@@ -438,7 +441,7 @@ func (a *Agent) runParsed(ctx context.Context, result linter.ParseResult, linter
 				File:         r.File,
 				Round:        round,
 				Strategy:     strategy,
-				IssuesBefore: len(tasks[i].Issues),
+				IssuesBefore: len(tasks[r.TaskID].Issues),
 				Output:       r.Output,
 				Success:      r.Success,
 				Error:        r.Error,
@@ -480,8 +483,8 @@ func (a *Agent) runParsed(ctx context.Context, result linter.ParseResult, linter
 				remainingByFile[iss.File]++
 			}
 		}
-		for i, r := range results {
-			before := len(tasks[i].Issues)
+		for _, r := range results {
+			before := len(tasks[r.TaskID].Issues)
 			after := remainingByFile[r.File]
 			fixed := before - after
 			if fixed < 0 {

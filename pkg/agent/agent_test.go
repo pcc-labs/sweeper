@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/papercomputeco/sweeper/pkg/config"
 	"github.com/papercomputeco/sweeper/pkg/linter"
@@ -287,6 +288,68 @@ func TestAgentRunMultiRoundWithRetry(t *testing.T) {
 	}
 	if summary.Fixed != 2 {
 		t.Errorf("expected 2 fixed, got %d", summary.Fixed)
+	}
+}
+
+// Results stream back in completion order, not task order. Task order is
+// a.go then b.go (GroupByFile sorts by file); the executor holds a.go until
+// b.go has finished so results arrive reversed. Pairing per-file state with
+// results by index would credit a.go's issue count to b.go and misreport
+// the fixed tally (issue #26). Asserts per-file outcomes, never order.
+func TestAgentRunAttributionWithReorderedCompletions(t *testing.T) {
+	issues := []linter.Issue{
+		{File: "a.go", Line: 1, Linter: "revive", Message: "msg1"},
+		{File: "a.go", Line: 2, Linter: "revive", Message: "msg2"},
+		{File: "a.go", Line: 3, Linter: "revive", Message: "msg3"},
+		{File: "b.go", Line: 1, Linter: "revive", Message: "msg4"},
+	}
+	remaining := []linter.Issue{
+		{File: "a.go", Line: 1, Linter: "revive", Message: "msg1"},
+		{File: "a.go", Line: 2, Linter: "revive", Message: "msg2"},
+		{File: "a.go", Line: 3, Linter: "revive", Message: "msg3"},
+	}
+	callCount := 0
+	fakeLinter := func(ctx context.Context, dir string) (linter.ParseResult, error) {
+		callCount++
+		switch callCount {
+		case 1:
+			return linter.ParseResult{Issues: issues, Parsed: true}, nil
+		case 2:
+			// Round 1 fixed b.go only; a.go untouched.
+			return linter.ParseResult{Issues: remaining, Parsed: true}, nil
+		default:
+			return linter.ParseResult{Parsed: true}, nil
+		}
+	}
+	bDone := make(chan struct{})
+	var once sync.Once
+	fakeExecutor := func(ctx context.Context, task worker.Task) worker.Result {
+		if task.File == "b.go" {
+			once.Do(func() { close(bDone) })
+			return worker.Result{TaskID: task.ID, File: task.File, Success: true, IssuesFix: len(task.Issues), Output: "fixed b"}
+		}
+		<-bDone
+		time.Sleep(100 * time.Millisecond)
+		return worker.Result{TaskID: task.ID, File: task.File, Success: true, IssuesFix: len(task.Issues), Output: "attempt a"}
+	}
+	cfg := config.Config{
+		TargetDir:      t.TempDir(),
+		Concurrency:    2,
+		TelemetryDir:   t.TempDir(),
+		MaxRounds:      3,
+		StaleThreshold: 2,
+	}
+	a := New(cfg, WithLinterFunc(fakeLinter), WithExecutor(fakeExecutor))
+	summary, err := a.Run(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if summary.Rounds != 2 {
+		t.Errorf("expected 2 rounds, got %d", summary.Rounds)
+	}
+	// Round 1: b.go 1->0 (+1), a.go 3->3 (+0). Round 2: a.go 3->0 (+3).
+	if summary.Fixed != 4 {
+		t.Errorf("expected 4 fixed with correct per-file attribution, got %d", summary.Fixed)
 	}
 }
 

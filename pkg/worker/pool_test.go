@@ -86,6 +86,57 @@ func TestPoolRunStream(t *testing.T) {
 	}
 }
 
+// The pool stamps TaskID and File onto results itself so TaskID-keyed
+// lookups downstream stay valid even if an executor forgets to set them.
+// Output carries the file the executor actually ran, as ground truth.
+func TestPoolRunStreamStampsTaskIDAndFile(t *testing.T) {
+	tasks := []Task{
+		{ID: 4, File: "a.go"},
+		{ID: 7, File: "b.go"},
+		{ID: 9, File: "c.go"},
+	}
+	fileByID := make(map[int]string, len(tasks))
+	for _, task := range tasks {
+		fileByID[task.ID] = task.File
+	}
+	executor := func(ctx context.Context, task Task) Result {
+		return Result{Success: true, Output: task.File}
+	}
+	pool := NewPool(2, executor)
+	for r := range pool.RunStream(context.Background(), tasks) {
+		if r.File != r.Output {
+			t.Errorf("result for %s stamped with File %q", r.Output, r.File)
+		}
+		if fileByID[r.TaskID] != r.Output {
+			t.Errorf("result for %s stamped with TaskID %d", r.Output, r.TaskID)
+		}
+		delete(fileByID, r.TaskID)
+	}
+	if len(fileByID) != 0 {
+		t.Errorf("missing results for tasks: %v", fileByID)
+	}
+}
+
+func TestPoolRunStampsTaskIDAndFile(t *testing.T) {
+	tasks := []Task{
+		{ID: 3, File: "x.go"},
+		{ID: 5, File: "y.go"},
+	}
+	executor := func(ctx context.Context, task Task) Result {
+		return Result{Success: true, Output: task.File}
+	}
+	pool := NewPool(2, executor)
+	results := pool.Run(context.Background(), tasks)
+	if len(results) != len(tasks) {
+		t.Fatalf("expected %d results, got %d", len(tasks), len(results))
+	}
+	for i, r := range results {
+		if r.TaskID != tasks[i].ID || r.File != tasks[i].File {
+			t.Errorf("result %d: got TaskID=%d File=%q, want TaskID=%d File=%q", i, r.TaskID, r.File, tasks[i].ID, tasks[i].File)
+		}
+	}
+}
+
 func TestPoolRunStreamEmpty(t *testing.T) {
 	executor := func(ctx context.Context, task Task) Result {
 		t.Fatal("executor should not be called for empty tasks")

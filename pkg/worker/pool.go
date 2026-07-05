@@ -39,7 +39,7 @@ func (p *Pool) RunStream(ctx context.Context, tasks []Task) <-chan Result {
 			defer wg.Done()
 			sem <- struct{}{}
 			defer func() { <-sem }()
-			ch <- p.executor(ctx, t)
+			ch <- stamp(p.executor(ctx, t), t)
 		}(task)
 	}
 	go func() {
@@ -47,6 +47,16 @@ func (p *Pool) RunStream(ctx context.Context, tasks []Task) <-chan Result {
 		close(ch)
 	}()
 	return ch
+}
+
+// stamp sets attribution fields from the task, overwriting whatever the
+// executor returned: results stream back in completion order, and consumers
+// key per-task state off TaskID, so attribution must not depend on every
+// executor remembering to set it.
+func stamp(r Result, t Task) Result {
+	r.TaskID = t.ID
+	r.File = t.File
+	return r
 }
 
 func (p *Pool) Run(ctx context.Context, tasks []Task) []Result {
@@ -69,7 +79,7 @@ func (p *Pool) Run(ctx context.Context, tasks []Task) []Result {
 			defer wg.Done()
 			sem <- struct{}{}
 			defer func() { <-sem }()
-			results[idx] = p.executor(ctx, t)
+			results[idx] = stamp(p.executor(ctx, t), t)
 		}(i, task)
 	}
 	wg.Wait()
