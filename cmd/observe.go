@@ -38,6 +38,18 @@ func newObserveCmd() *cobra.Command {
 				fmt.Println(line)
 			}
 
+			models, err := obs.AnalyzeModels()
+			if err == nil && len(models) > 0 {
+				fmt.Println("\nModel tiers:")
+				for _, m := range models {
+					line := fmt.Sprintf("  %-28s %d/%d (%.0f%%)", m.Model, m.Successes, m.Attempts, m.SuccessRate*100)
+					if m.TotalTokens > 0 {
+						line += fmt.Sprintf("  [%d tokens]", m.TotalTokens)
+					}
+					fmt.Println(line)
+				}
+			}
+
 			hist, err := obs.AnalyzeHistory()
 			if err == nil && hist.TotalRuns > 0 {
 				fmt.Printf("\nHistorical trends (%d runs):\n", hist.TotalRuns)

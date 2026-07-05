@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -340,5 +341,50 @@ func TestAnalyzeHistoryReadError(t *testing.T) {
 	_, err := obs.AnalyzeHistory()
 	if err == nil {
 		t.Error("expected error reading unreadable file")
+	}
+}
+
+func TestAnalyzeModels(t *testing.T) {
+	dir := t.TempDir()
+	lines := []string{
+		`{"timestamp":"2026-07-04T10:00:00Z","type":"fix_attempt","data":{"model":"qwen2.5-coder:7b","provider":"ollama","success":true,"prompt_tokens":100,"output_tokens":50}}`,
+		`{"timestamp":"2026-07-04T10:01:00Z","type":"fix_attempt","data":{"model":"qwen2.5-coder:7b","provider":"ollama","success":false,"prompt_tokens":100,"output_tokens":50}}`,
+		`{"timestamp":"2026-07-04T10:02:00Z","type":"fix_attempt","data":{"model":"claude-haiku-4-5","provider":"claude","success":true}}`,
+		`{"timestamp":"2026-07-04T10:03:00Z","type":"advisor_plan","data":{"model":"claude-opus-4-8","success":true}}`,
+	}
+	content := strings.Join(lines, "\n") + "\n"
+	if err := os.WriteFile(filepath.Join(dir, "events.jsonl"), []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	insights, err := New(dir).AnalyzeModels()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(insights) != 2 {
+		t.Fatalf("expected 2 models (advisor_plan excluded), got %d: %+v", len(insights), insights)
+	}
+	// Sorted by attempts desc: qwen first.
+	q := insights[0]
+	if q.Model != "qwen2.5-coder:7b" || q.Attempts != 2 || q.Successes != 1 || q.SuccessRate != 0.5 || q.TotalTokens != 300 {
+		t.Errorf("unexpected qwen stats: %+v", q)
+	}
+	h := insights[1]
+	if h.Model != "claude-haiku-4-5" || h.Provider != "claude" || h.Attempts != 1 || h.SuccessRate != 1.0 {
+		t.Errorf("unexpected haiku stats: %+v", h)
+	}
+}
+
+func TestAnalyzeModelsEmptyModelBucketsAsDefault(t *testing.T) {
+	dir := t.TempDir()
+	line := `{"timestamp":"2026-07-04T10:00:00Z","type":"fix_attempt","data":{"model":"","provider":"claude","success":true}}` + "\n"
+	if err := os.WriteFile(filepath.Join(dir, "events.jsonl"), []byte(line), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	insights, err := New(dir).AnalyzeModels()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(insights) != 1 || insights[0].Model != "(default)" {
+		t.Errorf("expected empty model bucketed as (default), got %+v", insights)
 	}
 }
