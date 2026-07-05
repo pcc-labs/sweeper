@@ -132,7 +132,6 @@ func TestFromTOMLInvalidRateLimit(t *testing.T) {
 	}
 }
 
-
 func TestFromTOMLVMFields(t *testing.T) {
 	tc := NewDefaultTOMLConfig()
 	tc.VM.Enabled = true
@@ -238,6 +237,49 @@ func TestLoadExplicitConfigPathNotFound(t *testing.T) {
 	_, err := LoadTOML("", "/nonexistent/path/config.toml")
 	if err == nil {
 		t.Error("expected error for missing explicit config path, got nil")
+	}
+}
+
+// TestEnvProviderBeatsTOMLWorker reproduces the documented precedence:
+// env vars must beat any TOML section, including [worker], which itself
+// normally beats [provider] within TOML. A project [worker] section must
+// not be able to shadow a SWEEPER_PROVIDER_* env override.
+func TestEnvProviderBeatsTOMLWorker(t *testing.T) {
+	dir := t.TempDir()
+	sweeper := filepath.Join(dir, ".sweeper")
+	if err := os.MkdirAll(sweeper, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	tomlContent := `
+version = 1
+
+[worker]
+name = "ollama"
+model = "toml-worker-model"
+api_base = "http://toml-worker:1"
+`
+	if err := os.WriteFile(filepath.Join(sweeper, "config.toml"), []byte(tomlContent), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Setenv("SWEEPER_PROVIDER_NAME", "env-provider")
+	t.Setenv("SWEEPER_PROVIDER_MODEL", "env-provider-model")
+	t.Setenv("SWEEPER_PROVIDER_API_BASE", "http://env-provider:2")
+
+	tc, err := LoadTOML(dir, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := FromTOML(tc)
+
+	if cfg.Provider != "env-provider" {
+		t.Errorf("expected env provider name to win, got %q", cfg.Provider)
+	}
+	if cfg.ProviderModel != "env-provider-model" {
+		t.Errorf("expected env provider model to win over TOML [worker].model, got %q", cfg.ProviderModel)
+	}
+	if cfg.ProviderAPI != "http://env-provider:2" {
+		t.Errorf("expected env provider api_base to win, got %q", cfg.ProviderAPI)
 	}
 }
 

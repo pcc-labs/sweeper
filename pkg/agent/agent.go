@@ -20,6 +20,15 @@ import (
 
 type LinterFunc func(ctx context.Context, dir string) (linter.ParseResult, error)
 
+// LadderRung is one escalation step above the base worker: a pooled
+// executor plus the metadata needed to route prompts and telemetry.
+type LadderRung struct {
+	Exec     worker.Executor
+	Kind     provider.Kind
+	Provider string
+	Model    string
+}
+
 // VMManager is the interface for VM lifecycle management.
 type VMManager interface {
 	Shutdown() error
@@ -45,6 +54,7 @@ type Agent struct {
 	advisorExec     worker.Executor
 	advisorProvider string
 	advisorModel    string
+	ladder          []LadderRung
 }
 
 type Option func(*Agent)
@@ -62,6 +72,12 @@ func WithExecutor(exec worker.Executor) Option {
 // the provider registry via cfg.AdvisorProvider/AdvisorModel.
 func WithAdvisorExecutor(exec worker.Executor) Option {
 	return func(a *Agent) { a.advisorExec = exec }
+}
+
+// WithLadder injects escalation rungs 1..N above the base executor.
+// Primarily for tests; production wiring parses cfg.EscalationLadder.
+func WithLadder(rungs []LadderRung) Option {
+	return func(a *Agent) { a.ladder = rungs }
 }
 
 func WithVM(vm VMManager) Option {
@@ -119,6 +135,42 @@ func New(cfg config.Config, opts ...Option) *Agent {
 			a.advisorExec = p.NewExec(provider.Config{Model: cfg.AdvisorModel})
 			a.advisorProvider = advName
 			a.advisorModel = cfg.AdvisorModel
+		}
+	}
+
+	// Resolve the escalation ladder: rungs above the base worker, climbed
+	// per file on stagnation. Executors are constructed once and reused.
+	if len(cfg.EscalationLadder) > 0 {
+		if cfg.VM {
+			fmt.Printf("Warning: escalation ladder is not yet supported with --vm; ladder disabled\n")
+		} else {
+			rungs := make([]LadderRung, 0, len(cfg.EscalationLadder))
+			for _, entry := range cfg.EscalationLadder {
+				entry = strings.TrimSpace(entry)
+				if entry == "" {
+					fmt.Printf("Warning: empty escalation ladder entry; ladder disabled\n")
+					rungs = nil
+					break
+				}
+				rungProv, rungModel := provider.ParseRung(entry, provName)
+				p, err := provider.Get(rungProv)
+				if err != nil {
+					fmt.Printf("Warning: escalation rung %q: %v; ladder disabled\n", entry, err)
+					rungs = nil
+					break
+				}
+				apiBase := ""
+				if rungProv == provName {
+					apiBase = cfg.ProviderAPI
+				}
+				rungs = append(rungs, LadderRung{
+					Exec:     p.NewExec(provider.Config{Model: rungModel, APIBase: apiBase}),
+					Kind:     p.Kind,
+					Provider: rungProv,
+					Model:    rungModel,
+				})
+			}
+			a.ladder = rungs
 		}
 	}
 
@@ -196,7 +248,16 @@ func (a *Agent) runParsed(ctx context.Context, result linter.ParseResult, linter
 
 	summary := Summary{TotalIssues: len(issues)}
 	fileHistories := make(map[string]*loop.FileHistory)
-	explorationAttempted := make(map[string]bool)
+	// explorationRungs records, per file, the HIGHEST rung at which
+	// exploration has been dispatched. Presence (not the value) distinguishes
+	// "never explored" from "explored at rung 0" — check with the
+	// comma-ok form, not a zero-value sentinel.
+	explorationRungs := make(map[string]int)
+
+	var esc *loop.Escalation
+	if len(a.ladder) > 0 {
+		esc = loop.NewEscalation(len(a.ladder))
+	}
 
 	for round := 0; round < maxRounds; round++ {
 		if len(issues) == 0 {
@@ -207,9 +268,17 @@ func (a *Agent) runParsed(ctx context.Context, result linter.ParseResult, linter
 		var hints map[string]advisor.PlannedTask
 		if a.advisorExec != nil && !a.cfg.DryRun {
 			fixTasks, hints = a.advise(ctx, round, fixTasks, fileHistories)
+			if esc != nil {
+				for file, hint := range hints {
+					if idx := a.rungIndexForModel(hint.Tier); idx > 0 {
+						esc.Seed(file, idx)
+					}
+				}
+			}
 		}
 		tasks := make([]worker.Task, len(fixTasks))
 		strategies := make([]loop.Strategy, len(fixTasks))
+		rungs := make([]int, len(fixTasks))
 
 		for i, ft := range fixTasks {
 			fh := safeHistory(fileHistories[ft.File])
@@ -219,15 +288,35 @@ func (a *Agent) runParsed(ctx context.Context, result linter.ParseResult, linter
 			}
 			strategies[i] = strategy
 
+			rung := 0
+			if esc != nil {
+				// Only a stagnant file may climb the ladder: an advisor
+				// exploration hint alone (ResolveStrategy honors it whenever
+				// history exists) must not burn a rung on a file that is
+				// still improving. The exploration prompt is still honored
+				// either way — only the ladder climb is gated.
+				if strategy == loop.StrategyExploration && loop.DetectStagnation(fh, a.cfg.StaleThreshold) {
+					rung = esc.Bump(ft.File)
+					if a.ladder[rung-1].Model != "" {
+						fmt.Printf("  escalating %s to %s\n", ft.File, a.ladder[rung-1].Model)
+					}
+				} else {
+					rung = esc.Rung(ft.File)
+				}
+			}
+			rungs[i] = rung
+
 			tasks[i] = worker.Task{
 				ID:     i,
 				File:   ft.File,
 				Dir:    a.cfg.TargetDir,
 				Issues: ft.Issues,
 			}
-			tasks[i].Prompt = a.buildPrompt(tasks[i], strategy, fh.LastOutput())
+			tasks[i].Prompt = a.buildPromptForKind(a.rungKind(rung), tasks[i], strategy, fh.LastOutput())
 			if strategy == loop.StrategyExploration {
-				explorationAttempted[ft.File] = true
+				if prev, ok := explorationRungs[ft.File]; !ok || rung > prev {
+					explorationRungs[ft.File] = rung
+				}
 			}
 		}
 
@@ -247,12 +336,22 @@ func (a *Agent) runParsed(ctx context.Context, result linter.ParseResult, linter
 			return summary, nil
 		}
 
-		results := a.runRound(ctx, tasks)
+		exec := a.executor
+		if esc != nil {
+			execByID := make(map[int]worker.Executor, len(tasks))
+			for i := range tasks {
+				execByID[tasks[i].ID] = a.rungExecutor(rungs[i])
+			}
+			exec = func(ctx context.Context, task worker.Task) worker.Result {
+				return execByID[task.ID](ctx, task)
+			}
+		}
+		results := a.runRound(ctx, tasks, exec)
 		summary.Rounds = round + 1
 
 		for i, r := range results {
 			strategy := strategies[i]
-			a.publishFixAttempt(ctx, r, linterName, round, strategy)
+			a.publishFixAttempt(ctx, r, linterName, round, strategy, rungs[r.TaskID])
 
 			// Update file history
 			fh, ok := fileHistories[r.File]
@@ -343,7 +442,7 @@ func (a *Agent) runParsed(ctx context.Context, result linter.ParseResult, linter
 		}
 
 		// Filter to retryable issues
-		issues = filterRetryableIssues(reResult.Issues, fileHistories, explorationAttempted, a.cfg.StaleThreshold)
+		issues = filterRetryableIssues(reResult.Issues, fileHistories, explorationRungs, a.cfg.StaleThreshold, esc)
 
 		if a.sessionPath != "" {
 			_ = session.UpdateStatus(a.sessionPath, round+1, len(reResult.Issues), summary.Fixed, len(issues))
@@ -354,8 +453,8 @@ func (a *Agent) runParsed(ctx context.Context, result linter.ParseResult, linter
 	return summary, nil
 }
 
-func (a *Agent) runRound(ctx context.Context, tasks []worker.Task) []worker.Result {
-	pool := worker.NewPoolWithRateLimit(a.cfg.Concurrency, a.cfg.RateLimit, a.executor)
+func (a *Agent) runRound(ctx context.Context, tasks []worker.Task, exec worker.Executor) []worker.Result {
+	pool := worker.NewPoolWithRateLimit(a.cfg.Concurrency, a.cfg.RateLimit, exec)
 	ch := pool.RunStream(ctx, tasks)
 	results := make([]worker.Result, 0, len(tasks))
 	for r := range ch {
@@ -363,6 +462,37 @@ func (a *Agent) runRound(ctx context.Context, tasks []worker.Task) []worker.Resu
 		results = append(results, r)
 	}
 	return results
+}
+
+// rungExecutor returns the executor for a rung; rung 0 is the base worker.
+func (a *Agent) rungExecutor(rung int) worker.Executor {
+	if rung <= 0 || rung > len(a.ladder) {
+		return a.executor
+	}
+	return a.ladder[rung-1].Exec
+}
+
+// rungIndexForModel maps an advisor tier hint to a ladder rung index
+// (1-based; 0 means no match). Hints match a rung's model name exactly or
+// as "provider/model".
+func (a *Agent) rungIndexForModel(tier string) int {
+	if tier == "" {
+		return 0
+	}
+	for i, r := range a.ladder {
+		if tier == r.Model || tier == r.Provider+"/"+r.Model {
+			return i + 1
+		}
+	}
+	return 0
+}
+
+// rungKind returns the provider kind for a rung; rung 0 is the base worker.
+func (a *Agent) rungKind(rung int) provider.Kind {
+	if rung <= 0 || rung > len(a.ladder) {
+		return a.providerKind
+	}
+	return a.ladder[rung-1].Kind
 }
 
 // advise runs the advisor phase for a round: build the planning prompt, run
@@ -382,7 +512,11 @@ func (a *Agent) advise(ctx context.Context, round int, tasks []planner.FixTask, 
 		"model":       a.advisorModel,
 		"files_input": len(tasks),
 	}
-	plan, err := advisor.Advise(ctx, a.advisorExec, a.cfg.TargetDir, tasks, hist, round)
+	tiers := make([]string, 0, len(a.ladder))
+	for _, r := range a.ladder {
+		tiers = append(tiers, r.Model)
+	}
+	plan, err := advisor.Advise(ctx, a.advisorExec, a.cfg.TargetDir, tasks, hist, round, tiers)
 	data["duration"] = time.Since(start).String()
 	if err != nil {
 		fmt.Printf("Warning: advisor failed (%v); using mechanical plan\n", err)
@@ -400,7 +534,7 @@ func (a *Agent) advise(ctx context.Context, round int, tasks []planner.FixTask, 
 	return ordered, hints
 }
 
-func (a *Agent) publishFixAttempt(ctx context.Context, r worker.Result, linterName string, round int, strategy loop.Strategy) {
+func (a *Agent) publishFixAttempt(ctx context.Context, r worker.Result, linterName string, round int, strategy loop.Strategy, rung int) {
 	_ = a.pub.Publish(ctx, telemetry.Event{
 		Timestamp: time.Now(),
 		Type:      "fix_attempt",
@@ -415,6 +549,7 @@ func (a *Agent) publishFixAttempt(ctx context.Context, r worker.Result, linterNa
 			"strategy":      strategy.String(),
 			"provider":      r.Provider,
 			"model":         r.Model,
+			"rung":          rung,
 			"prompt_tokens": r.PromptTokens,
 			"output_tokens": r.OutputTokens,
 		},
@@ -491,9 +626,10 @@ func (a *Agent) runRaw(ctx context.Context, result linter.ParseResult, linterNam
 	return summary, nil
 }
 
-// buildPrompt selects the appropriate prompt builder based on provider kind and strategy.
-func (a *Agent) buildPrompt(task worker.Task, strategy loop.Strategy, priorOutput string) string {
-	if a.providerKind == provider.KindAPI {
+// buildPromptForKind selects the appropriate prompt builder for the
+// dispatching rung's provider kind and strategy.
+func (a *Agent) buildPromptForKind(kind provider.Kind, task worker.Task, strategy loop.Strategy, priorOutput string) string {
+	if kind == provider.KindAPI {
 		switch strategy {
 		case loop.StrategyRetry:
 			return worker.BuildAPIRetryPrompt(task, priorOutput)
@@ -513,6 +649,11 @@ func (a *Agent) buildPrompt(task worker.Task, strategy loop.Strategy, priorOutpu
 	}
 }
 
+// buildPrompt selects the prompt for the base worker's provider kind.
+func (a *Agent) buildPrompt(task worker.Task, strategy loop.Strategy, priorOutput string) string {
+	return a.buildPromptForKind(a.providerKind, task, strategy, priorOutput)
+}
+
 func safeHistory(fh *loop.FileHistory) loop.FileHistory {
 	if fh == nil {
 		return loop.FileHistory{}
@@ -520,17 +661,24 @@ func safeHistory(fh *loop.FileHistory) loop.FileHistory {
 	return *fh
 }
 
-// filterRetryableIssues removes issues for files that have exhausted all strategies.
-// A file is removed if exploration was attempted and it's still stagnant.
+// filterRetryableIssues removes issues for files that have exhausted all
+// strategies. Without a ladder, a file is removed once exploration was
+// attempted and it is still stagnant. With a ladder, the file survives
+// until exploration has been attempted at the TOP rung — not merely until
+// the file's current rung is the top rung (a seed or bump can reach the top
+// rung without exploration ever having been dispatched there).
 func filterRetryableIssues(
 	issues []linter.Issue,
 	histories map[string]*loop.FileHistory,
-	explorationAttempted map[string]bool,
+	explorationRungs map[string]int,
 	staleThreshold int,
+	esc *loop.Escalation,
 ) []linter.Issue {
 	var retryable []linter.Issue
 	for _, iss := range issues {
-		if explorationAttempted[iss.File] && loop.DetectStagnation(safeHistory(histories[iss.File]), staleThreshold) {
+		rung, explored := explorationRungs[iss.File]
+		stagnant := explored && loop.DetectStagnation(safeHistory(histories[iss.File]), staleThreshold)
+		if stagnant && (esc == nil || rung >= esc.Top()) {
 			continue
 		}
 		retryable = append(retryable, iss)

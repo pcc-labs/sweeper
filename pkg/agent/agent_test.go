@@ -451,9 +451,9 @@ func TestFilterRetryableIssues(t *testing.T) {
 	histories := map[string]*loop.FileHistory{
 		"a.go": {File: "a.go", Rounds: []loop.RoundResult{{Fixed: 0}, {Fixed: 0}}},
 	}
-	explored := map[string]bool{"a.go": true}
+	explored := map[string]int{"a.go": 0}
 
-	result := filterRetryableIssues(issues, histories, explored, 2)
+	result := filterRetryableIssues(issues, histories, explored, 2, nil)
 	if len(result) != 1 {
 		t.Errorf("expected 1 retryable issue, got %d", len(result))
 	}
@@ -469,9 +469,9 @@ func TestFilterRetryableIssuesNoExploration(t *testing.T) {
 	histories := map[string]*loop.FileHistory{
 		"a.go": {File: "a.go", Rounds: []loop.RoundResult{{Fixed: 0}, {Fixed: 0}}},
 	}
-	explored := map[string]bool{}
+	explored := map[string]int{}
 
-	result := filterRetryableIssues(issues, histories, explored, 2)
+	result := filterRetryableIssues(issues, histories, explored, 2, nil)
 	if len(result) != 1 {
 		t.Errorf("expected 1 retryable issue (exploration not tried), got %d", len(result))
 	}
@@ -1141,5 +1141,394 @@ func TestNewAgentAdvisorDisabledInVMMode(t *testing.T) {
 	a := New(cfg)
 	if a.advisorExec != nil {
 		t.Error("expected advisor disabled in VM mode")
+	}
+}
+
+func TestNewAgentBuildsLadderFromConfig(t *testing.T) {
+	cfg := config.Config{
+		TargetDir:        t.TempDir(),
+		Concurrency:      1,
+		TelemetryDir:     t.TempDir(),
+		Provider:         "claude",
+		EscalationLadder: []string{"claude-haiku-4-5", "claude/claude-sonnet-5"},
+	}
+	a := New(cfg)
+	if len(a.ladder) != 2 {
+		t.Fatalf("expected 2 rungs, got %d", len(a.ladder))
+	}
+	if a.ladder[0].Provider != "claude" || a.ladder[0].Model != "claude-haiku-4-5" {
+		t.Errorf("unexpected rung 1: %+v", a.ladder[0])
+	}
+	if a.ladder[1].Provider != "claude" || a.ladder[1].Model != "claude-sonnet-5" {
+		t.Errorf("unexpected rung 2: %+v", a.ladder[1])
+	}
+	if a.ladder[0].Kind != provider.KindCLI {
+		t.Errorf("expected KindCLI rung, got %v", a.ladder[0].Kind)
+	}
+	if a.ladder[0].Exec == nil {
+		t.Error("expected rung executor constructed")
+	}
+}
+
+func TestNewAgentLadderDisabledInVMMode(t *testing.T) {
+	cfg := config.Config{
+		TargetDir:        t.TempDir(),
+		Concurrency:      1,
+		TelemetryDir:     t.TempDir(),
+		Provider:         "claude",
+		EscalationLadder: []string{"claude-haiku-4-5"},
+		VM:               true,
+	}
+	a := New(cfg)
+	if a.ladder != nil {
+		t.Error("expected ladder disabled in VM mode")
+	}
+}
+
+func TestNewAgentLadderEmptyEntryDisablesLadder(t *testing.T) {
+	cfg := config.Config{
+		TargetDir:        t.TempDir(),
+		Concurrency:      1,
+		TelemetryDir:     t.TempDir(),
+		Provider:         "claude",
+		EscalationLadder: []string{"claude-haiku-4-5", "  "},
+	}
+	a := New(cfg)
+	if a.ladder != nil {
+		t.Error("expected ladder disabled when an entry is blank")
+	}
+}
+
+func TestRungExecutorZeroIsBase(t *testing.T) {
+	base := func(ctx context.Context, task worker.Task) worker.Result {
+		return worker.Result{File: "base"}
+	}
+	rung1 := func(ctx context.Context, task worker.Task) worker.Result {
+		return worker.Result{File: "rung1"}
+	}
+	cfg := config.Config{TargetDir: t.TempDir(), Concurrency: 1, TelemetryDir: t.TempDir()}
+	a := New(cfg, WithExecutor(base), WithLadder([]LadderRung{{Exec: rung1, Kind: provider.KindCLI, Provider: "claude", Model: "m1"}}))
+	if got := a.rungExecutor(0)(context.Background(), worker.Task{}); got.File != "base" {
+		t.Errorf("rung 0 should be the base executor, got %s", got.File)
+	}
+	if got := a.rungExecutor(1)(context.Background(), worker.Task{}); got.File != "rung1" {
+		t.Errorf("rung 1 should be the ladder executor, got %s", got.File)
+	}
+}
+
+// ladderTestRung returns a LadderRung whose executor records the files it
+// handled into calls (mutex-guarded) and never fixes anything.
+func ladderTestRung(t *testing.T, model string, calls *[]string, mu *sync.Mutex) LadderRung {
+	t.Helper()
+	return LadderRung{
+		Kind:     provider.KindCLI,
+		Provider: "claude",
+		Model:    model,
+		Exec: func(ctx context.Context, task worker.Task) worker.Result {
+			mu.Lock()
+			*calls = append(*calls, task.File)
+			mu.Unlock()
+			return worker.Result{TaskID: task.ID, File: task.File, Success: true, IssuesFix: 0, Model: model}
+		},
+	}
+}
+
+func TestAgentLadderEscalatesOnStagnation(t *testing.T) {
+	dir := t.TempDir()
+	cfg := config.Config{
+		TargetDir:      dir,
+		Concurrency:    1,
+		TelemetryDir:   t.TempDir(),
+		MaxRounds:      2,
+		StaleThreshold: 1,
+	}
+	issues := []linter.Issue{{File: "a.go", Line: 1, Linter: "revive", Message: "m1"}}
+	fakeLinter := func(ctx context.Context, dir string) (linter.ParseResult, error) {
+		return linter.ParseResult{Issues: issues, Parsed: true}, nil
+	}
+	var mu sync.Mutex
+	var baseCalls, rung1Calls []string
+	var rung1Prompts []string
+	base := func(ctx context.Context, task worker.Task) worker.Result {
+		mu.Lock()
+		baseCalls = append(baseCalls, task.File)
+		mu.Unlock()
+		return worker.Result{TaskID: task.ID, File: task.File, Success: true, IssuesFix: 0}
+	}
+	rung1 := LadderRung{
+		Kind: provider.KindCLI, Provider: "claude", Model: "claude-haiku-4-5",
+		Exec: func(ctx context.Context, task worker.Task) worker.Result {
+			mu.Lock()
+			rung1Calls = append(rung1Calls, task.File)
+			rung1Prompts = append(rung1Prompts, task.Prompt)
+			mu.Unlock()
+			return worker.Result{TaskID: task.ID, File: task.File, Success: true, IssuesFix: 0, Model: "claude-haiku-4-5"}
+		},
+	}
+	pub := &capturePublisher{}
+	a := New(cfg, WithLinterFunc(fakeLinter), WithExecutor(base), WithLadder([]LadderRung{rung1}), WithPublisher(pub))
+	if _, err := a.Run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	// Round 1: base rung, standard. Round 2: stagnant -> exploration + climb.
+	if len(baseCalls) != 1 || baseCalls[0] != "a.go" {
+		t.Errorf("expected round 1 on base, got %v", baseCalls)
+	}
+	if len(rung1Calls) != 1 || rung1Calls[0] != "a.go" {
+		t.Errorf("expected round 2 escalated to rung 1, got %v", rung1Calls)
+	}
+	if len(rung1Prompts) != 1 || !strings.Contains(rung1Prompts[0], "Consider refactoring") {
+		t.Error("expected exploration prompt kept on the escalated attempt")
+	}
+	// Telemetry: rung 0 then rung 1.
+	var rungs []int
+	for _, e := range pub.events {
+		if e.Type == "fix_attempt" {
+			if r, ok := e.Data["rung"].(int); ok {
+				rungs = append(rungs, r)
+			}
+		}
+	}
+	if len(rungs) != 2 || rungs[0] != 0 || rungs[1] != 1 {
+		t.Errorf("expected fix_attempt rungs [0 1], got %v", rungs)
+	}
+}
+
+func TestAgentLadderKeepsFileWhileRungsRemain(t *testing.T) {
+	// With a 2-rung ladder and permanent stagnation, the file must survive
+	// exploration at rung 1 and get a rung-2 attempt before being dropped.
+	dir := t.TempDir()
+	cfg := config.Config{
+		TargetDir:      dir,
+		Concurrency:    1,
+		TelemetryDir:   t.TempDir(),
+		MaxRounds:      3,
+		StaleThreshold: 1,
+	}
+	issues := []linter.Issue{{File: "a.go", Line: 1, Linter: "revive", Message: "m1"}}
+	fakeLinter := func(ctx context.Context, dir string) (linter.ParseResult, error) {
+		return linter.ParseResult{Issues: issues, Parsed: true}, nil
+	}
+	var mu sync.Mutex
+	var baseCalls, rung1Calls, rung2Calls []string
+	base := func(ctx context.Context, task worker.Task) worker.Result {
+		mu.Lock()
+		baseCalls = append(baseCalls, task.File)
+		mu.Unlock()
+		return worker.Result{TaskID: task.ID, File: task.File, Success: true, IssuesFix: 0}
+	}
+	a := New(cfg, WithLinterFunc(fakeLinter), WithExecutor(base), WithLadder([]LadderRung{
+		ladderTestRung(t, "m1", &rung1Calls, &mu),
+		ladderTestRung(t, "m2", &rung2Calls, &mu),
+	}))
+	if _, err := a.Run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(baseCalls) != 1 || len(rung1Calls) != 1 || len(rung2Calls) != 1 {
+		t.Errorf("expected one attempt per rung [1 1 1], got [%d %d %d]",
+			len(baseCalls), len(rung1Calls), len(rung2Calls))
+	}
+}
+
+func TestFilterRetryableKeepsStagnantFileBelowTop(t *testing.T) {
+	issues := []linter.Issue{{File: "a.go", Line: 1, Linter: "revive", Message: "m"}}
+	histories := map[string]*loop.FileHistory{
+		"a.go": {File: "a.go", Rounds: []loop.RoundResult{{Fixed: 0}, {Fixed: 0}}},
+	}
+	esc := loop.NewEscalation(2)
+	rung := esc.Bump("a.go") // rung 1 of 2 — one rung left; exploration dispatched here
+	explorationRungs := map[string]int{"a.go": rung}
+	got := filterRetryableIssues(issues, histories, explorationRungs, 1, esc)
+	if len(got) != 1 {
+		t.Errorf("expected stagnant file kept while below top rung, got %d issues", len(got))
+	}
+	rung = esc.Bump("a.go") // now at top; exploration dispatched at the top rung
+	explorationRungs["a.go"] = rung
+	got = filterRetryableIssues(issues, histories, explorationRungs, 1, esc)
+	if len(got) != 0 {
+		t.Errorf("expected stagnant file dropped at top rung, got %d issues", len(got))
+	}
+}
+
+// TestFilterRetryableKeepsFileSeededToTopWithoutTopRungExploration is the
+// RED case for the exploration-tracking bug: a file explores at a LOW rung,
+// is later seeded straight to the TOP rung (e.g. by an advisor tier hint)
+// without exploration ever having been dispatched there, and goes stagnant.
+// The documented invariant is "the file survives until exploration has been
+// attempted at the TOP rung" — tracking only the file's current rung (as
+// esc.AtTop did) would wrongly drop it the moment the seed lands on top.
+func TestFilterRetryableKeepsFileSeededToTopWithoutTopRungExploration(t *testing.T) {
+	issues := []linter.Issue{{File: "a.go", Line: 1, Linter: "revive", Message: "m"}}
+	histories := map[string]*loop.FileHistory{
+		"a.go": {File: "a.go", Rounds: []loop.RoundResult{{Fixed: 0}, {Fixed: 0}}},
+	}
+	esc := loop.NewEscalation(2)
+	lowRung := esc.Bump("a.go") // exploration dispatched at rung 1 only
+	explorationRungs := map[string]int{"a.go": lowRung}
+
+	esc.Seed("a.go", 2) // advisor tier hint seeds straight to the top rung;
+	// no exploration has run there yet.
+
+	got := filterRetryableIssues(issues, histories, explorationRungs, 1, esc)
+	if len(got) != 1 {
+		t.Errorf("expected file kept: exploration never ran at the top rung (esc.Rung=%d, recorded=%d), got %d issues",
+			esc.Rung("a.go"), explorationRungs["a.go"], len(got))
+	}
+
+	// Once exploration actually runs at the top rung, the file may be dropped.
+	explorationRungs["a.go"] = esc.Top()
+	got = filterRetryableIssues(issues, histories, explorationRungs, 1, esc)
+	if len(got) != 0 {
+		t.Errorf("expected file dropped once exploration has run at the top rung, got %d issues", len(got))
+	}
+}
+
+func TestFilterRetryableNilEscalationMatchesOldBehavior(t *testing.T) {
+	issues := []linter.Issue{{File: "a.go", Line: 1, Linter: "revive", Message: "m"}}
+	histories := map[string]*loop.FileHistory{
+		"a.go": {File: "a.go", Rounds: []loop.RoundResult{{Fixed: 0}, {Fixed: 0}}},
+	}
+	explorationRungs := map[string]int{"a.go": 0}
+	got := filterRetryableIssues(issues, histories, explorationRungs, 1, nil)
+	if len(got) != 0 {
+		t.Errorf("expected old drop behavior with nil escalation, got %d issues", len(got))
+	}
+}
+
+func TestAgentAdvisorTierSeedsStartingRung(t *testing.T) {
+	cfg := config.Config{
+		TargetDir:    t.TempDir(),
+		Concurrency:  1,
+		TelemetryDir: t.TempDir(),
+	}
+	issues := []linter.Issue{{File: "a.go", Line: 1, Linter: "revive", Message: "m1"}}
+	fakeLinter := func(ctx context.Context, dir string) (linter.ParseResult, error) {
+		return linter.ParseResult{Issues: issues, Parsed: true}, nil
+	}
+	advisorExec := func(ctx context.Context, task worker.Task) worker.Result {
+		return worker.Result{Success: true,
+			Output: `{"tasks":[{"file":"a.go","tier":"claude-sonnet-5"}]}`}
+	}
+	var mu sync.Mutex
+	var baseCalls, rung1Calls, rung2Calls []string
+	base := func(ctx context.Context, task worker.Task) worker.Result {
+		mu.Lock()
+		baseCalls = append(baseCalls, task.File)
+		mu.Unlock()
+		return worker.Result{TaskID: task.ID, File: task.File, Success: true, IssuesFix: 1}
+	}
+	a := New(cfg, WithLinterFunc(fakeLinter), WithExecutor(base),
+		WithAdvisorExecutor(advisorExec),
+		WithLadder([]LadderRung{
+			ladderTestRung(t, "claude-haiku-4-5", &rung1Calls, &mu),
+			ladderTestRung(t, "claude-sonnet-5", &rung2Calls, &mu),
+		}))
+	if _, err := a.Run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	// Tier hint names rung 2's model, so round 1 dispatches there directly.
+	if len(rung2Calls) != 1 || rung2Calls[0] != "a.go" {
+		t.Errorf("expected round 1 seeded onto rung 2, got base=%v rung1=%v rung2=%v",
+			baseCalls, rung1Calls, rung2Calls)
+	}
+}
+
+func TestAgentAdvisorUnknownTierIgnored(t *testing.T) {
+	cfg := config.Config{
+		TargetDir:    t.TempDir(),
+		Concurrency:  1,
+		TelemetryDir: t.TempDir(),
+	}
+	issues := []linter.Issue{{File: "a.go", Line: 1, Linter: "revive", Message: "m1"}}
+	fakeLinter := func(ctx context.Context, dir string) (linter.ParseResult, error) {
+		return linter.ParseResult{Issues: issues, Parsed: true}, nil
+	}
+	advisorExec := func(ctx context.Context, task worker.Task) worker.Result {
+		return worker.Result{Success: true,
+			Output: `{"tasks":[{"file":"a.go","tier":"gpt-42-ultra"}]}`}
+	}
+	var mu sync.Mutex
+	var baseCalls, rung1Calls []string
+	base := func(ctx context.Context, task worker.Task) worker.Result {
+		mu.Lock()
+		baseCalls = append(baseCalls, task.File)
+		mu.Unlock()
+		return worker.Result{TaskID: task.ID, File: task.File, Success: true, IssuesFix: 1}
+	}
+	a := New(cfg, WithLinterFunc(fakeLinter), WithExecutor(base),
+		WithAdvisorExecutor(advisorExec),
+		WithLadder([]LadderRung{ladderTestRung(t, "claude-haiku-4-5", &rung1Calls, &mu)}))
+	if _, err := a.Run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(baseCalls) != 1 || len(rung1Calls) != 0 {
+		t.Errorf("expected unknown tier ignored (base dispatch), got base=%v rung1=%v", baseCalls, rung1Calls)
+	}
+}
+
+// TestAdvisorExplorationHintDoesNotBumpWithoutStagnation is the RED case for
+// the bump-gating bug: advisor.ResolveStrategy honors an "exploration" hint
+// whenever history exists, with no stagnation check. Round 1 makes progress
+// (Fixed>0, not stagnant); round 2's advisor hint forces "exploration"
+// anyway. The exploration prompt may still be honored, but the ladder must
+// NOT climb — escalation is stagnation-triggered, not hint-triggered.
+func TestAdvisorExplorationHintDoesNotBumpWithoutStagnation(t *testing.T) {
+	dir := t.TempDir()
+	cfg := config.Config{
+		TargetDir:      dir,
+		Concurrency:    1,
+		TelemetryDir:   t.TempDir(),
+		MaxRounds:      2,
+		StaleThreshold: 2,
+	}
+	callCount := 0
+	issuesRound1 := []linter.Issue{
+		{File: "a.go", Line: 1, Linter: "revive", Message: "m1"},
+		{File: "a.go", Line: 5, Linter: "revive", Message: "m2"},
+	}
+	issuesRound2 := []linter.Issue{
+		{File: "a.go", Line: 5, Linter: "revive", Message: "m2"},
+	}
+	fakeLinter := func(ctx context.Context, dir string) (linter.ParseResult, error) {
+		callCount++
+		if callCount == 1 {
+			return linter.ParseResult{Issues: issuesRound1, Parsed: true}, nil
+		}
+		return linter.ParseResult{Issues: issuesRound2, Parsed: true}, nil
+	}
+	advisorRound := 0
+	advisorExec := func(ctx context.Context, task worker.Task) worker.Result {
+		advisorRound++
+		if advisorRound == 1 {
+			return worker.Result{Success: true, Output: `{"tasks":[{"file":"a.go"}]}`}
+		}
+		// Round 2: advisor forces "exploration" even though round 1 made
+		// progress (Fixed>0 => not stagnant).
+		return worker.Result{Success: true, Output: `{"tasks":[{"file":"a.go","strategy":"exploration"}]}`}
+	}
+	base := func(ctx context.Context, task worker.Task) worker.Result {
+		return worker.Result{TaskID: task.ID, File: task.File, Success: true, IssuesFix: 1}
+	}
+	pub := &capturePublisher{}
+	a := New(cfg, WithLinterFunc(fakeLinter), WithExecutor(base),
+		WithAdvisorExecutor(advisorExec),
+		WithLadder([]LadderRung{{Kind: provider.KindCLI, Provider: "claude", Model: "m1", Exec: base}}),
+		WithPublisher(pub))
+	if _, err := a.Run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	var rungs []int
+	for _, e := range pub.events {
+		if e.Type == "fix_attempt" {
+			if r, ok := e.Data["rung"].(int); ok {
+				rungs = append(rungs, r)
+			}
+		}
+	}
+	if len(rungs) != 2 {
+		t.Fatalf("expected 2 fix_attempt events, got %d: %v", len(rungs), rungs)
+	}
+	if rungs[1] != 0 {
+		t.Errorf("expected round 2 rung to stay 0 (advisor exploration hint without stagnation must not bump), got %d", rungs[1])
 	}
 }

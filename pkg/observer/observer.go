@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 
 	"github.com/papercomputeco/sweeper/pkg/telemetry"
 )
@@ -235,4 +236,71 @@ func (o *Observer) computeInsights(events []telemetry.Event) []Insight {
 		})
 	}
 	return insights
+}
+
+// ModelInsight aggregates fix_attempt outcomes per worker model tier.
+type ModelInsight struct {
+	Provider    string
+	Model       string
+	Attempts    int
+	Successes   int
+	SuccessRate float64
+	TotalTokens int
+}
+
+// AnalyzeModels computes success rate and token spend per worker model,
+// so escalation-ladder tiers can be compared for cost-effectiveness.
+func (o *Observer) AnalyzeModels() ([]ModelInsight, error) {
+	events, err := o.readAll()
+	if err != nil {
+		return nil, err
+	}
+	type stats struct {
+		provider  string
+		attempts  int
+		successes int
+		tokens    int
+	}
+	byModel := make(map[string]*stats)
+	for _, e := range events {
+		if e.Type != "fix_attempt" {
+			continue
+		}
+		model, _ := e.Data["model"].(string)
+		if model == "" {
+			model = "(default)"
+		}
+		s, ok := byModel[model]
+		if !ok {
+			s = &stats{}
+			byModel[model] = s
+		}
+		if p, ok := e.Data["provider"].(string); ok && p != "" {
+			s.provider = p
+		}
+		s.attempts++
+		if success, _ := e.Data["success"].(bool); success {
+			s.successes++
+		}
+		s.tokens += eventInt(e.Data["prompt_tokens"]) + eventInt(e.Data["output_tokens"])
+	}
+	insights := make([]ModelInsight, 0, len(byModel))
+	for model, s := range byModel {
+		rate := 0.0
+		if s.attempts > 0 {
+			rate = float64(s.successes) / float64(s.attempts)
+		}
+		insights = append(insights, ModelInsight{
+			Provider: s.provider, Model: model,
+			Attempts: s.attempts, Successes: s.successes,
+			SuccessRate: rate, TotalTokens: s.tokens,
+		})
+	}
+	sort.Slice(insights, func(i, j int) bool {
+		if insights[i].Attempts != insights[j].Attempts {
+			return insights[i].Attempts > insights[j].Attempts
+		}
+		return insights[i].Model < insights[j].Model
+	})
+	return insights, nil
 }

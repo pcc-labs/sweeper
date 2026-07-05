@@ -63,6 +63,16 @@ With an advisor configured, each round starts with a one-shot planning call to a
 
 Every advisor call is recorded as an `advisor_plan` telemetry event, so `sweeper observe` can compare advised runs against mechanical ones.
 
+## Model Escalation
+
+With a `[worker.escalation]` ladder configured, files that stop improving climb to stronger models instead of just stronger prompts. The first round runs everything on the base worker (cheap, often local). When a file stagnates for `stale_threshold` rounds, sweeper switches it to the exploration prompt *and* moves it up one rung — e.g. `qwen2.5-coder:7b` → `claude-haiku-4-5` → `claude-sonnet-5`. A file is only abandoned after exploration has been tried at the top rung.
+
+When both an advisor and a ladder are configured, the advisor is told the available tiers and can pin a gnarly file to a stronger starting rung via its `tier` hint.
+
+A rung on a provider other than the worker's uses that provider's default endpoint; `api_base` only applies to the worker's own provider.
+
+Every `fix_attempt` telemetry event records the model and rung, and `sweeper observe` reports success rate and token spend per tier — so you learn which rung is cost-effective for which class of issue.
+
 ## Setup
 
 ### Go CLI (standalone)
@@ -75,6 +85,7 @@ sweeper run                              # default: golangci-lint with claude
 sweeper run --provider codex             # use OpenAI Codex CLI instead
 sweeper run --provider ollama --model qwen2.5-coder:7b  # local model via Ollama
 sweeper run --advisor-model claude-opus-4-8 --provider ollama --model qwen2.5-coder:7b  # frontier model plans, local model fixes
+sweeper run --max-rounds 4                # with [worker.escalation] configured: stagnant files climb the model ladder
 sweeper run --vm -c 3 --max-rounds 3    # VM isolation, 3 agents, 3 rounds
 sweeper run -- npm run lint              # any linter
 sweeper observe                          # review success rates + token spend

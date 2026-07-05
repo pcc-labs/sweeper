@@ -72,12 +72,15 @@ Examples:
 			}
 			if cmd.Flags().Changed("provider") {
 				tc.Provider.Name = providerName
+				tc.Worker.Name = providerName
 			}
 			if cmd.Flags().Changed("model") {
 				tc.Provider.Model = providerModel
+				tc.Worker.Model = providerModel
 			}
 			if cmd.Flags().Changed("api-base") {
 				tc.Provider.APIBase = providerAPI
+				tc.Worker.APIBase = providerAPI
 			}
 			if cmd.Flags().Changed("advisor-provider") {
 				tc.Advisor.Name = advisorProvider
@@ -95,8 +98,6 @@ Examples:
 				fmt.Printf("Concurrency clamped to %d (max %d)\n", clamped, config.MaxConcurrency)
 				cfg.Concurrency = clamped
 			}
-
-
 
 			// Build telemetry publisher from config.
 			pub := buildPublisher(tc)

@@ -27,7 +27,7 @@ const planInstructions = "\nRespond ONLY with JSON matching this schema, no pros
 // BuildPrompt renders the advisor planning prompt for the upcoming round.
 // It includes the lint issues grouped by file and, after round 0, a one-line
 // history summary per file — never file contents.
-func BuildPrompt(tasks []planner.FixTask, histories map[string]loop.FileHistory, round int) string {
+func BuildPrompt(tasks []planner.FixTask, histories map[string]loop.FileHistory, round int, tiers []string) string {
 	var b strings.Builder
 	b.WriteString(advisorPreamble)
 	fmt.Fprintf(&b, "Plan round %d of a lint-fixing sweep across %d files:\n\n", round+1, len(tasks))
@@ -47,6 +47,11 @@ func BuildPrompt(tasks []planner.FixTask, histories map[string]loop.FileHistory,
 			}
 		}
 		b.WriteString("\n")
+	}
+	if len(tiers) > 0 {
+		fmt.Fprintf(&b, "Available worker tiers, weakest to strongest: %s. "+
+			"Set \"tier\" to one of these exact names when a file warrants a stronger starting model.\n",
+			strings.Join(tiers, ", "))
 	}
 	b.WriteString(planInstructions)
 	return b.String()

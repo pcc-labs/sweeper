@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"os"
 
 	"github.com/papercomputeco/sweeper/pkg/config"
 	"github.com/papercomputeco/sweeper/pkg/observer"
@@ -36,6 +37,21 @@ func newObserveCmd() *cobra.Command {
 					line += fmt.Sprintf("  [%d tokens]", i.TotalTokens)
 				}
 				fmt.Println(line)
+			}
+
+			models, err := obs.AnalyzeModels()
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: model tier stats unavailable: %v\n", err)
+			}
+			if err == nil && len(models) > 0 {
+				fmt.Println("\nModel tiers:")
+				for _, m := range models {
+					line := fmt.Sprintf("  %-28s %d/%d (%.0f%%)", m.Model, m.Successes, m.Attempts, m.SuccessRate*100)
+					if m.TotalTokens > 0 {
+						line += fmt.Sprintf("  [%d tokens]", m.TotalTokens)
+					}
+					fmt.Println(line)
+				}
 			}
 
 			hist, err := obs.AnalyzeHistory()
