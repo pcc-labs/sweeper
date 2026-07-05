@@ -1129,7 +1129,7 @@ func TestNewAgentAdvisorModelOnlyDefaultsToClaude(t *testing.T) {
 	}
 }
 
-func TestNewAgentAdvisorDisabledInVMMode(t *testing.T) {
+func TestNewAgentAdvisorDisabledInVMModeWithoutFactory(t *testing.T) {
 	cfg := config.Config{
 		TargetDir:    t.TempDir(),
 		Concurrency:  1,
@@ -1140,7 +1140,7 @@ func TestNewAgentAdvisorDisabledInVMMode(t *testing.T) {
 	}
 	a := New(cfg)
 	if a.advisorExec != nil {
-		t.Error("expected advisor disabled in VM mode")
+		t.Error("expected advisor disabled in VM mode when no VM executor factory is wired")
 	}
 }
 
@@ -1170,7 +1170,7 @@ func TestNewAgentBuildsLadderFromConfig(t *testing.T) {
 	}
 }
 
-func TestNewAgentLadderDisabledInVMMode(t *testing.T) {
+func TestNewAgentLadderDisabledInVMModeWithoutFactory(t *testing.T) {
 	cfg := config.Config{
 		TargetDir:        t.TempDir(),
 		Concurrency:      1,
@@ -1181,7 +1181,139 @@ func TestNewAgentLadderDisabledInVMMode(t *testing.T) {
 	}
 	a := New(cfg)
 	if a.ladder != nil {
-		t.Error("expected ladder disabled in VM mode")
+		t.Error("expected ladder disabled in VM mode when no VM executor factory is wired")
+	}
+}
+
+// vmFactoryRecorder returns a VM executor factory that records the models
+// it is asked to build executors for.
+func vmFactoryRecorder(models *[]string) func(model string) worker.Executor {
+	return func(model string) worker.Executor {
+		*models = append(*models, model)
+		return func(ctx context.Context, task worker.Task) worker.Result {
+			return worker.Result{TaskID: task.ID, File: task.File, Success: true}
+		}
+	}
+}
+
+func TestNewAgentVMBaseExecutorFromFactory(t *testing.T) {
+	var models []string
+	cfg := config.Config{
+		TargetDir:     t.TempDir(),
+		Concurrency:   1,
+		TelemetryDir:  t.TempDir(),
+		Provider:      "claude",
+		ProviderModel: "claude-haiku-4-5",
+		VM:            true,
+	}
+	a := New(cfg, WithVMExecutorFactory(vmFactoryRecorder(&models)))
+	if a.executor == nil {
+		t.Fatal("expected base executor constructed from VM factory")
+	}
+	if len(models) != 1 || models[0] != "claude-haiku-4-5" {
+		t.Errorf("expected factory called once with base model, got %v", models)
+	}
+	if a.providerKind != provider.KindCLI {
+		t.Errorf("expected KindCLI under VM, got %v", a.providerKind)
+	}
+}
+
+func TestNewAgentVMLadderBuiltViaFactory(t *testing.T) {
+	var models []string
+	cfg := config.Config{
+		TargetDir:        t.TempDir(),
+		Concurrency:      1,
+		TelemetryDir:     t.TempDir(),
+		Provider:         "claude",
+		ProviderModel:    "claude-haiku-4-5",
+		EscalationLadder: []string{"claude-sonnet-5", "claude/claude-opus-4-8"},
+		VM:               true,
+	}
+	a := New(cfg, WithVMExecutorFactory(vmFactoryRecorder(&models)))
+	if len(a.ladder) != 2 {
+		t.Fatalf("expected 2 rungs under --vm, got %d", len(a.ladder))
+	}
+	want := []string{"claude-haiku-4-5", "claude-sonnet-5", "claude-opus-4-8"}
+	if len(models) != len(want) {
+		t.Fatalf("expected factory models %v, got %v", want, models)
+	}
+	for i := range want {
+		if models[i] != want[i] {
+			t.Errorf("factory model[%d]: expected %q, got %q", i, want[i], models[i])
+		}
+	}
+	if a.ladder[0].Provider != "claude" || a.ladder[0].Model != "claude-sonnet-5" {
+		t.Errorf("unexpected rung 1: %+v", a.ladder[0])
+	}
+	if a.ladder[1].Provider != "claude" || a.ladder[1].Model != "claude-opus-4-8" {
+		t.Errorf("unexpected rung 2: %+v", a.ladder[1])
+	}
+	if a.ladder[0].Kind != provider.KindCLI || a.ladder[1].Kind != provider.KindCLI {
+		t.Error("expected KindCLI rungs under --vm")
+	}
+	if a.ladder[0].Exec == nil || a.ladder[1].Exec == nil {
+		t.Error("expected rung executors constructed")
+	}
+}
+
+func TestNewAgentVMLadderCrossProviderRungDisabled(t *testing.T) {
+	var models []string
+	cfg := config.Config{
+		TargetDir:        t.TempDir(),
+		Concurrency:      1,
+		TelemetryDir:     t.TempDir(),
+		Provider:         "claude",
+		EscalationLadder: []string{"claude-sonnet-5", "ollama/qwen2.5-coder:32b"},
+		VM:               true,
+	}
+	a := New(cfg, WithVMExecutorFactory(vmFactoryRecorder(&models)))
+	if a.ladder != nil {
+		t.Error("expected ladder disabled when a rung resolves to a non-claude provider under --vm")
+	}
+}
+
+func TestNewAgentVMAdvisorBuiltViaFactory(t *testing.T) {
+	var models []string
+	cfg := config.Config{
+		TargetDir:    t.TempDir(),
+		Concurrency:  1,
+		TelemetryDir: t.TempDir(),
+		Provider:     "claude",
+		AdvisorModel: "claude-opus-4-8",
+		VM:           true,
+	}
+	a := New(cfg, WithVMExecutorFactory(vmFactoryRecorder(&models)))
+	if a.advisorExec == nil {
+		t.Fatal("expected advisor enabled under --vm with a VM executor factory")
+	}
+	if a.advisorProvider != "claude" || a.advisorModel != "claude-opus-4-8" {
+		t.Errorf("unexpected advisor metadata: %q/%q", a.advisorProvider, a.advisorModel)
+	}
+	found := false
+	for _, m := range models {
+		if m == "claude-opus-4-8" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected factory called with advisor model, got %v", models)
+	}
+}
+
+func TestNewAgentVMAdvisorNonClaudeProviderDisabled(t *testing.T) {
+	var models []string
+	cfg := config.Config{
+		TargetDir:       t.TempDir(),
+		Concurrency:     1,
+		TelemetryDir:    t.TempDir(),
+		Provider:        "claude",
+		AdvisorProvider: "codex",
+		AdvisorModel:    "o4-mini",
+		VM:              true,
+	}
+	a := New(cfg, WithVMExecutorFactory(vmFactoryRecorder(&models)))
+	if a.advisorExec != nil {
+		t.Error("expected advisor disabled for non-claude advisor provider under --vm")
 	}
 }
 

@@ -55,6 +55,7 @@ type Agent struct {
 	advisorProvider string
 	advisorModel    string
 	ladder          []LadderRung
+	vmExecFactory   func(model string) worker.Executor
 }
 
 type Option func(*Agent)
@@ -84,6 +85,14 @@ func WithVM(vm VMManager) Option {
 	return func(a *Agent) { a.vm = vm }
 }
 
+// WithVMExecutorFactory supplies the constructor for executors that run
+// inside the sweep VM. Under cfg.VM the base worker, escalation rungs, and
+// advisor are built through this factory (claude models only) instead of
+// the provider registry.
+func WithVMExecutorFactory(f func(model string) worker.Executor) Option {
+	return func(a *Agent) { a.vmExecFactory = f }
+}
+
 func WithPublisher(pub telemetry.Publisher) Option {
 	return func(a *Agent) { a.pub = pub }
 }
@@ -99,50 +108,79 @@ func New(cfg config.Config, opts ...Option) *Agent {
 		pub:      telemetry.NewJSONLPublisher(cfg.TelemetryDir),
 	}
 
+	// Options apply before cfg resolution so injected executors take
+	// precedence and resolution only fills what is still unset.
+	for _, opt := range opts {
+		opt(a)
+	}
+
 	// Resolve provider from registry; fall back to Claude if lookup fails
 	// (cmd/run.go validates before reaching here, so fallback is defensive).
 	provName := cfg.Provider
 	if provName == "" {
 		provName = "claude"
 	}
-	if p, err := provider.Get(provName); err == nil {
+	p, perr := provider.Get(provName)
+	if perr == nil {
 		a.providerKind = p.Kind
-		a.executor = p.NewExec(provider.Config{
-			Model:   cfg.ProviderModel,
-			APIBase: cfg.ProviderAPI,
-		})
 	} else {
 		fmt.Printf("Warning: unknown provider %q, falling back to claude\n", provName)
 		a.providerKind = provider.KindCLI
-		a.executor = worker.NewClaudeExecutor(worker.ClaudeConfig{Model: cfg.ProviderModel})
+	}
+	if a.executor == nil {
+		switch {
+		case cfg.VM && a.vmExecFactory != nil:
+			// VM executors always run the claude CLI inside the VM.
+			a.executor = a.vmExecFactory(cfg.ProviderModel)
+			a.providerKind = provider.KindCLI
+		case perr == nil:
+			a.executor = p.NewExec(provider.Config{
+				Model:   cfg.ProviderModel,
+				APIBase: cfg.ProviderAPI,
+			})
+		default:
+			a.executor = worker.NewClaudeExecutor(worker.ClaudeConfig{Model: cfg.ProviderModel})
+		}
 	}
 
 	// Resolve the optional sweep-planning advisor. The advisor is a one-shot
 	// planning call, so it requires a CLI provider whose output is plain text
 	// (KindAPI executors apply diffs and cannot answer planning prompts).
-	if cfg.AdvisorProvider != "" || cfg.AdvisorModel != "" {
+	// Under --vm it runs inside the VM, which only supports claude.
+	if (cfg.AdvisorProvider != "" || cfg.AdvisorModel != "") && a.advisorExec == nil {
 		advName := cfg.AdvisorProvider
 		if advName == "" {
 			advName = "claude"
 		}
-		if cfg.VM {
-			fmt.Printf("Warning: advisor is not yet supported with --vm; advisor disabled\n")
-		} else if p, err := provider.Get(advName); err != nil {
-			fmt.Printf("Warning: unknown advisor provider %q, advisor disabled\n", advName)
-		} else if p.Kind != provider.KindCLI {
-			fmt.Printf("Warning: advisor requires a CLI provider, got %q; advisor disabled\n", advName)
-		} else {
-			a.advisorExec = p.NewExec(provider.Config{Model: cfg.AdvisorModel})
+		switch {
+		case cfg.VM && a.vmExecFactory == nil:
+			fmt.Printf("Warning: advisor requires a VM executor with --vm; advisor disabled\n")
+		case cfg.VM && advName != "claude":
+			fmt.Printf("Warning: advisor provider %q is not supported with --vm (only claude); advisor disabled\n", advName)
+		case cfg.VM:
+			a.advisorExec = a.vmExecFactory(cfg.AdvisorModel)
 			a.advisorProvider = advName
 			a.advisorModel = cfg.AdvisorModel
+		default:
+			if p, err := provider.Get(advName); err != nil {
+				fmt.Printf("Warning: unknown advisor provider %q, advisor disabled\n", advName)
+			} else if p.Kind != provider.KindCLI {
+				fmt.Printf("Warning: advisor requires a CLI provider, got %q; advisor disabled\n", advName)
+			} else {
+				a.advisorExec = p.NewExec(provider.Config{Model: cfg.AdvisorModel})
+				a.advisorProvider = advName
+				a.advisorModel = cfg.AdvisorModel
+			}
 		}
 	}
 
 	// Resolve the escalation ladder: rungs above the base worker, climbed
 	// per file on stagnation. Executors are constructed once and reused.
-	if len(cfg.EscalationLadder) > 0 {
-		if cfg.VM {
-			fmt.Printf("Warning: escalation ladder is not yet supported with --vm; ladder disabled\n")
+	// Under --vm rungs run inside the VM, which only supports claude models;
+	// a rung on any other provider disables the ladder.
+	if len(cfg.EscalationLadder) > 0 && a.ladder == nil {
+		if cfg.VM && a.vmExecFactory == nil {
+			fmt.Printf("Warning: escalation ladder requires a VM executor with --vm; ladder disabled\n")
 		} else {
 			rungs := make([]LadderRung, 0, len(cfg.EscalationLadder))
 			for _, entry := range cfg.EscalationLadder {
@@ -153,6 +191,20 @@ func New(cfg config.Config, opts ...Option) *Agent {
 					break
 				}
 				rungProv, rungModel := provider.ParseRung(entry, provName)
+				if cfg.VM {
+					if rungProv != "claude" {
+						fmt.Printf("Warning: escalation rung %q: provider %q is not supported with --vm (only claude); ladder disabled\n", entry, rungProv)
+						rungs = nil
+						break
+					}
+					rungs = append(rungs, LadderRung{
+						Exec:     a.vmExecFactory(rungModel),
+						Kind:     provider.KindCLI,
+						Provider: rungProv,
+						Model:    rungModel,
+					})
+					continue
+				}
 				p, err := provider.Get(rungProv)
 				if err != nil {
 					fmt.Printf("Warning: escalation rung %q: %v; ladder disabled\n", entry, err)
@@ -174,9 +226,6 @@ func New(cfg config.Config, opts ...Option) *Agent {
 		}
 	}
 
-	for _, opt := range opts {
-		opt(a)
-	}
 	return a
 }
 
