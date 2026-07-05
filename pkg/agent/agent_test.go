@@ -453,7 +453,7 @@ func TestFilterRetryableIssues(t *testing.T) {
 	}
 	explored := map[string]bool{"a.go": true}
 
-	result := filterRetryableIssues(issues, histories, explored, 2)
+	result := filterRetryableIssues(issues, histories, explored, 2, nil)
 	if len(result) != 1 {
 		t.Errorf("expected 1 retryable issue, got %d", len(result))
 	}
@@ -471,7 +471,7 @@ func TestFilterRetryableIssuesNoExploration(t *testing.T) {
 	}
 	explored := map[string]bool{}
 
-	result := filterRetryableIssues(issues, histories, explored, 2)
+	result := filterRetryableIssues(issues, histories, explored, 2, nil)
 	if len(result) != 1 {
 		t.Errorf("expected 1 retryable issue (exploration not tried), got %d", len(result))
 	}
@@ -1213,5 +1213,150 @@ func TestRungExecutorZeroIsBase(t *testing.T) {
 	}
 	if got := a.rungExecutor(1)(context.Background(), worker.Task{}); got.File != "rung1" {
 		t.Errorf("rung 1 should be the ladder executor, got %s", got.File)
+	}
+}
+
+// ladderTestRung returns a LadderRung whose executor records the files it
+// handled into calls (mutex-guarded) and never fixes anything.
+func ladderTestRung(t *testing.T, model string, calls *[]string, mu *sync.Mutex) LadderRung {
+	t.Helper()
+	return LadderRung{
+		Kind:     provider.KindCLI,
+		Provider: "claude",
+		Model:    model,
+		Exec: func(ctx context.Context, task worker.Task) worker.Result {
+			mu.Lock()
+			*calls = append(*calls, task.File)
+			mu.Unlock()
+			return worker.Result{TaskID: task.ID, File: task.File, Success: true, IssuesFix: 0, Model: model}
+		},
+	}
+}
+
+func TestAgentLadderEscalatesOnStagnation(t *testing.T) {
+	dir := t.TempDir()
+	cfg := config.Config{
+		TargetDir:      dir,
+		Concurrency:    1,
+		TelemetryDir:   t.TempDir(),
+		MaxRounds:      2,
+		StaleThreshold: 1,
+	}
+	issues := []linter.Issue{{File: "a.go", Line: 1, Linter: "revive", Message: "m1"}}
+	fakeLinter := func(ctx context.Context, dir string) (linter.ParseResult, error) {
+		return linter.ParseResult{Issues: issues, Parsed: true}, nil
+	}
+	var mu sync.Mutex
+	var baseCalls, rung1Calls []string
+	var rung1Prompts []string
+	base := func(ctx context.Context, task worker.Task) worker.Result {
+		mu.Lock()
+		baseCalls = append(baseCalls, task.File)
+		mu.Unlock()
+		return worker.Result{TaskID: task.ID, File: task.File, Success: true, IssuesFix: 0}
+	}
+	rung1 := LadderRung{
+		Kind: provider.KindCLI, Provider: "claude", Model: "claude-haiku-4-5",
+		Exec: func(ctx context.Context, task worker.Task) worker.Result {
+			mu.Lock()
+			rung1Calls = append(rung1Calls, task.File)
+			rung1Prompts = append(rung1Prompts, task.Prompt)
+			mu.Unlock()
+			return worker.Result{TaskID: task.ID, File: task.File, Success: true, IssuesFix: 0, Model: "claude-haiku-4-5"}
+		},
+	}
+	pub := &capturePublisher{}
+	a := New(cfg, WithLinterFunc(fakeLinter), WithExecutor(base), WithLadder([]LadderRung{rung1}), WithPublisher(pub))
+	if _, err := a.Run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	// Round 1: base rung, standard. Round 2: stagnant -> exploration + climb.
+	if len(baseCalls) != 1 || baseCalls[0] != "a.go" {
+		t.Errorf("expected round 1 on base, got %v", baseCalls)
+	}
+	if len(rung1Calls) != 1 || rung1Calls[0] != "a.go" {
+		t.Errorf("expected round 2 escalated to rung 1, got %v", rung1Calls)
+	}
+	if len(rung1Prompts) != 1 || !strings.Contains(rung1Prompts[0], "Consider refactoring") {
+		t.Error("expected exploration prompt kept on the escalated attempt")
+	}
+	// Telemetry: rung 0 then rung 1.
+	var rungs []int
+	for _, e := range pub.events {
+		if e.Type == "fix_attempt" {
+			if r, ok := e.Data["rung"].(int); ok {
+				rungs = append(rungs, r)
+			}
+		}
+	}
+	if len(rungs) != 2 || rungs[0] != 0 || rungs[1] != 1 {
+		t.Errorf("expected fix_attempt rungs [0 1], got %v", rungs)
+	}
+}
+
+func TestAgentLadderKeepsFileWhileRungsRemain(t *testing.T) {
+	// With a 2-rung ladder and permanent stagnation, the file must survive
+	// exploration at rung 1 and get a rung-2 attempt before being dropped.
+	dir := t.TempDir()
+	cfg := config.Config{
+		TargetDir:      dir,
+		Concurrency:    1,
+		TelemetryDir:   t.TempDir(),
+		MaxRounds:      3,
+		StaleThreshold: 1,
+	}
+	issues := []linter.Issue{{File: "a.go", Line: 1, Linter: "revive", Message: "m1"}}
+	fakeLinter := func(ctx context.Context, dir string) (linter.ParseResult, error) {
+		return linter.ParseResult{Issues: issues, Parsed: true}, nil
+	}
+	var mu sync.Mutex
+	var baseCalls, rung1Calls, rung2Calls []string
+	base := func(ctx context.Context, task worker.Task) worker.Result {
+		mu.Lock()
+		baseCalls = append(baseCalls, task.File)
+		mu.Unlock()
+		return worker.Result{TaskID: task.ID, File: task.File, Success: true, IssuesFix: 0}
+	}
+	a := New(cfg, WithLinterFunc(fakeLinter), WithExecutor(base), WithLadder([]LadderRung{
+		ladderTestRung(t, "m1", &rung1Calls, &mu),
+		ladderTestRung(t, "m2", &rung2Calls, &mu),
+	}))
+	if _, err := a.Run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(baseCalls) != 1 || len(rung1Calls) != 1 || len(rung2Calls) != 1 {
+		t.Errorf("expected one attempt per rung [1 1 1], got [%d %d %d]",
+			len(baseCalls), len(rung1Calls), len(rung2Calls))
+	}
+}
+
+func TestFilterRetryableKeepsStagnantFileBelowTop(t *testing.T) {
+	issues := []linter.Issue{{File: "a.go", Line: 1, Linter: "revive", Message: "m"}}
+	histories := map[string]*loop.FileHistory{
+		"a.go": {File: "a.go", Rounds: []loop.RoundResult{{Fixed: 0}, {Fixed: 0}}},
+	}
+	attempted := map[string]bool{"a.go": true}
+	esc := loop.NewEscalation(2)
+	esc.Bump("a.go") // rung 1 of 2 — one rung left
+	got := filterRetryableIssues(issues, histories, attempted, 1, esc)
+	if len(got) != 1 {
+		t.Errorf("expected stagnant file kept while below top rung, got %d issues", len(got))
+	}
+	esc.Bump("a.go") // now at top
+	got = filterRetryableIssues(issues, histories, attempted, 1, esc)
+	if len(got) != 0 {
+		t.Errorf("expected stagnant file dropped at top rung, got %d issues", len(got))
+	}
+}
+
+func TestFilterRetryableNilEscalationMatchesOldBehavior(t *testing.T) {
+	issues := []linter.Issue{{File: "a.go", Line: 1, Linter: "revive", Message: "m"}}
+	histories := map[string]*loop.FileHistory{
+		"a.go": {File: "a.go", Rounds: []loop.RoundResult{{Fixed: 0}, {Fixed: 0}}},
+	}
+	attempted := map[string]bool{"a.go": true}
+	got := filterRetryableIssues(issues, histories, attempted, 1, nil)
+	if len(got) != 0 {
+		t.Errorf("expected old drop behavior with nil escalation, got %d issues", len(got))
 	}
 }

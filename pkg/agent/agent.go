@@ -250,6 +250,11 @@ func (a *Agent) runParsed(ctx context.Context, result linter.ParseResult, linter
 	fileHistories := make(map[string]*loop.FileHistory)
 	explorationAttempted := make(map[string]bool)
 
+	var esc *loop.Escalation
+	if len(a.ladder) > 0 {
+		esc = loop.NewEscalation(len(a.ladder))
+	}
+
 	for round := 0; round < maxRounds; round++ {
 		if len(issues) == 0 {
 			break
@@ -262,6 +267,7 @@ func (a *Agent) runParsed(ctx context.Context, result linter.ParseResult, linter
 		}
 		tasks := make([]worker.Task, len(fixTasks))
 		strategies := make([]loop.Strategy, len(fixTasks))
+		rungs := make([]int, len(fixTasks))
 
 		for i, ft := range fixTasks {
 			fh := safeHistory(fileHistories[ft.File])
@@ -271,13 +277,26 @@ func (a *Agent) runParsed(ctx context.Context, result linter.ParseResult, linter
 			}
 			strategies[i] = strategy
 
+			rung := 0
+			if esc != nil {
+				if strategy == loop.StrategyExploration {
+					rung = esc.Bump(ft.File)
+					if a.ladder[rung-1].Model != "" {
+						fmt.Printf("  escalating %s to %s\n", ft.File, a.ladder[rung-1].Model)
+					}
+				} else {
+					rung = esc.Rung(ft.File)
+				}
+			}
+			rungs[i] = rung
+
 			tasks[i] = worker.Task{
 				ID:     i,
 				File:   ft.File,
 				Dir:    a.cfg.TargetDir,
 				Issues: ft.Issues,
 			}
-			tasks[i].Prompt = a.buildPrompt(tasks[i], strategy, fh.LastOutput())
+			tasks[i].Prompt = a.buildPromptForKind(a.rungKind(rung), tasks[i], strategy, fh.LastOutput())
 			if strategy == loop.StrategyExploration {
 				explorationAttempted[ft.File] = true
 			}
@@ -299,12 +318,22 @@ func (a *Agent) runParsed(ctx context.Context, result linter.ParseResult, linter
 			return summary, nil
 		}
 
-		results := a.runRound(ctx, tasks)
+		exec := a.executor
+		if esc != nil {
+			execByID := make(map[int]worker.Executor, len(tasks))
+			for i := range tasks {
+				execByID[tasks[i].ID] = a.rungExecutor(rungs[i])
+			}
+			exec = func(ctx context.Context, task worker.Task) worker.Result {
+				return execByID[task.ID](ctx, task)
+			}
+		}
+		results := a.runRound(ctx, tasks, exec)
 		summary.Rounds = round + 1
 
 		for i, r := range results {
 			strategy := strategies[i]
-			a.publishFixAttempt(ctx, r, linterName, round, strategy)
+			a.publishFixAttempt(ctx, r, linterName, round, strategy, rungs[r.TaskID])
 
 			// Update file history
 			fh, ok := fileHistories[r.File]
@@ -395,7 +424,7 @@ func (a *Agent) runParsed(ctx context.Context, result linter.ParseResult, linter
 		}
 
 		// Filter to retryable issues
-		issues = filterRetryableIssues(reResult.Issues, fileHistories, explorationAttempted, a.cfg.StaleThreshold)
+		issues = filterRetryableIssues(reResult.Issues, fileHistories, explorationAttempted, a.cfg.StaleThreshold, esc)
 
 		if a.sessionPath != "" {
 			_ = session.UpdateStatus(a.sessionPath, round+1, len(reResult.Issues), summary.Fixed, len(issues))
@@ -406,8 +435,8 @@ func (a *Agent) runParsed(ctx context.Context, result linter.ParseResult, linter
 	return summary, nil
 }
 
-func (a *Agent) runRound(ctx context.Context, tasks []worker.Task) []worker.Result {
-	pool := worker.NewPoolWithRateLimit(a.cfg.Concurrency, a.cfg.RateLimit, a.executor)
+func (a *Agent) runRound(ctx context.Context, tasks []worker.Task, exec worker.Executor) []worker.Result {
+	pool := worker.NewPoolWithRateLimit(a.cfg.Concurrency, a.cfg.RateLimit, exec)
 	ch := pool.RunStream(ctx, tasks)
 	results := make([]worker.Result, 0, len(tasks))
 	for r := range ch {
@@ -468,7 +497,7 @@ func (a *Agent) advise(ctx context.Context, round int, tasks []planner.FixTask, 
 	return ordered, hints
 }
 
-func (a *Agent) publishFixAttempt(ctx context.Context, r worker.Result, linterName string, round int, strategy loop.Strategy) {
+func (a *Agent) publishFixAttempt(ctx context.Context, r worker.Result, linterName string, round int, strategy loop.Strategy, rung int) {
 	_ = a.pub.Publish(ctx, telemetry.Event{
 		Timestamp: time.Now(),
 		Type:      "fix_attempt",
@@ -483,6 +512,7 @@ func (a *Agent) publishFixAttempt(ctx context.Context, r worker.Result, linterNa
 			"strategy":      strategy.String(),
 			"provider":      r.Provider,
 			"model":         r.Model,
+			"rung":          rung,
 			"prompt_tokens": r.PromptTokens,
 			"output_tokens": r.OutputTokens,
 		},
@@ -559,9 +589,10 @@ func (a *Agent) runRaw(ctx context.Context, result linter.ParseResult, linterNam
 	return summary, nil
 }
 
-// buildPrompt selects the appropriate prompt builder based on provider kind and strategy.
-func (a *Agent) buildPrompt(task worker.Task, strategy loop.Strategy, priorOutput string) string {
-	if a.providerKind == provider.KindAPI {
+// buildPromptForKind selects the appropriate prompt builder for the
+// dispatching rung's provider kind and strategy.
+func (a *Agent) buildPromptForKind(kind provider.Kind, task worker.Task, strategy loop.Strategy, priorOutput string) string {
+	if kind == provider.KindAPI {
 		switch strategy {
 		case loop.StrategyRetry:
 			return worker.BuildAPIRetryPrompt(task, priorOutput)
@@ -581,6 +612,11 @@ func (a *Agent) buildPrompt(task worker.Task, strategy loop.Strategy, priorOutpu
 	}
 }
 
+// buildPrompt selects the prompt for the base worker's provider kind.
+func (a *Agent) buildPrompt(task worker.Task, strategy loop.Strategy, priorOutput string) string {
+	return a.buildPromptForKind(a.providerKind, task, strategy, priorOutput)
+}
+
 func safeHistory(fh *loop.FileHistory) loop.FileHistory {
 	if fh == nil {
 		return loop.FileHistory{}
@@ -588,17 +624,21 @@ func safeHistory(fh *loop.FileHistory) loop.FileHistory {
 	return *fh
 }
 
-// filterRetryableIssues removes issues for files that have exhausted all strategies.
-// A file is removed if exploration was attempted and it's still stagnant.
+// filterRetryableIssues removes issues for files that have exhausted all
+// strategies. Without a ladder, a file is removed once exploration was
+// attempted and it is still stagnant. With a ladder, the file survives
+// until exploration has been attempted at the TOP rung.
 func filterRetryableIssues(
 	issues []linter.Issue,
 	histories map[string]*loop.FileHistory,
 	explorationAttempted map[string]bool,
 	staleThreshold int,
+	esc *loop.Escalation,
 ) []linter.Issue {
 	var retryable []linter.Issue
 	for _, iss := range issues {
-		if explorationAttempted[iss.File] && loop.DetectStagnation(safeHistory(histories[iss.File]), staleThreshold) {
+		stagnant := explorationAttempted[iss.File] && loop.DetectStagnation(safeHistory(histories[iss.File]), staleThreshold)
+		if stagnant && (esc == nil || esc.AtTop(iss.File)) {
 			continue
 		}
 		retryable = append(retryable, iss)
