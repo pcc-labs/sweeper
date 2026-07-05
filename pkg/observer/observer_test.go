@@ -396,17 +396,16 @@ func TestAnalyzeModelsReadError(t *testing.T) {
 	_ = os.Chmod(path, 0o000)
 	t.Cleanup(func() { _ = os.Chmod(path, 0o644) })
 
-	_, err := New(dir).AnalyzeModels()
-	if err == nil {
+	if _, err := New(dir).AnalyzeModels(); err == nil {
 		t.Error("expected error reading unreadable file")
 	}
 }
 
-func TestAnalyzeModelsSortTiebreakByModel(t *testing.T) {
+func TestAnalyzeModelsSortsByModelOnEqualAttempts(t *testing.T) {
 	dir := t.TempDir()
 	lines := []string{
-		`{"timestamp":"2026-07-04T10:00:00Z","type":"fix_attempt","data":{"model":"b-model","success":true}}`,
-		`{"timestamp":"2026-07-04T10:01:00Z","type":"fix_attempt","data":{"model":"a-model","success":true}}`,
+		`{"timestamp":"2026-07-04T10:00:00Z","type":"fix_attempt","data":{"model":"zeta","provider":"claude","success":true}}`,
+		`{"timestamp":"2026-07-04T10:01:00Z","type":"fix_attempt","data":{"model":"alpha","provider":"claude","success":true}}`,
 	}
 	content := strings.Join(lines, "\n") + "\n"
 	if err := os.WriteFile(filepath.Join(dir, "events.jsonl"), []byte(content), 0o644); err != nil {
@@ -416,8 +415,7 @@ func TestAnalyzeModelsSortTiebreakByModel(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Equal attempts: sorted by model name ascending.
-	if len(insights) != 2 || insights[0].Model != "a-model" || insights[1].Model != "b-model" {
-		t.Errorf("expected tiebreak by model name, got %+v", insights)
+	if len(insights) != 2 || insights[0].Model != "alpha" || insights[1].Model != "zeta" {
+		t.Errorf("expected tie broken by model name (alpha, zeta), got %+v", insights)
 	}
 }

@@ -11,7 +11,9 @@
 
 set -euo pipefail
 
-COVERFILE=$(mktemp /tmp/coverage-XXXXXX.out)
+# X's must end the template: BSD/macOS mktemp treats a template with a
+# suffix as a literal path, so every run would share one file and race.
+COVERFILE=$(mktemp "${TMPDIR:-/tmp}/coverage-XXXXXX")
 trap 'rm -f "$COVERFILE"' EXIT
 
 echo "Running tests with coverage..."

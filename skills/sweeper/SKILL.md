@@ -92,7 +92,7 @@ sweeper run --provider ollama --model qwen2.5-coder:7b
 sweeper run --provider ollama --model codellama --api-base http://gpu-server:11434
 ```
 
-Available providers: `claude` (default, CLI), `codex` (CLI), `ollama` (API). CLI providers have built-in file tools. API providers include file content in the prompt and apply returned diffs. VM isolation (`--vm`) only works with CLI providers.
+Available providers: `claude` (default, CLI), `codex` (CLI), `ollama` (API). CLI providers have built-in file tools. API providers include file content in the prompt and apply returned diffs. VM isolation (`--vm`) only works with CLI providers and always invokes claude inside the VM; worker/rung/advisor models are passed via `--model`.
 
 ### VM isolation (recommended for production)
 

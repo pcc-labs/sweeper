@@ -74,7 +74,7 @@ func TestEscalationFilesIndependent(t *testing.T) {
 }
 
 func TestNewEscalationNegativeTopClampsToZero(t *testing.T) {
-	e := NewEscalation(-1)
+	e := NewEscalation(-3)
 	if e.Top() != 0 {
 		t.Errorf("expected negative top clamped to 0, got %d", e.Top())
 	}
