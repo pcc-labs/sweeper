@@ -100,7 +100,7 @@ Examples:
 			}
 
 			// Build telemetry publisher from config.
-			pub := buildPublisher(tc)
+			pub, telemetryPath := buildPublisher(tc)
 
 			// Validate provider exists before proceeding.
 			if _, err := provider.Get(cfg.Provider); err != nil {
@@ -186,8 +186,7 @@ Examples:
 			if err != nil {
 				return err
 			}
-			fmt.Printf("\nSummary: %d issues found, %d fixed, %d tasks failed\n",
-				summary.TotalIssues, summary.Fixed, summary.Failed)
+			fmt.Printf("\n%s\n", agent.FormatSummary(summary, telemetryPath))
 			if summary.Failed > 0 {
 				os.Exit(1)
 			}
@@ -224,17 +223,19 @@ func argsAfterDash(cmd *cobra.Command, args []string) []string {
 	return args[idx:]
 }
 
-func buildPublisher(tc config.TOMLConfig) telemetry.Publisher {
+// buildPublisher returns the telemetry publisher and the JSONL log path,
+// surfaced in the end-of-run summary so users can find per-file details.
+func buildPublisher(tc config.TOMLConfig) (telemetry.Publisher, string) {
 	jsonl := telemetry.NewJSONLPublisher(tc.Telemetry.Dir)
 
 	if tc.Telemetry.Backend != "confluent" {
-		return jsonl
+		return jsonl, jsonl.Path()
 	}
 
 	cc := tc.Telemetry.Confluent
 	if len(cc.Brokers) == 0 || cc.Topic == "" {
 		fmt.Println("Warning: confluent backend selected but brokers/topic not configured, using JSONL only")
-		return jsonl
+		return jsonl, jsonl.Path()
 	}
 
 	cp, err := confluent.NewPublisher(confluent.Config{
@@ -246,8 +247,8 @@ func buildPublisher(tc config.TOMLConfig) telemetry.Publisher {
 	})
 	if err != nil {
 		fmt.Printf("Warning: confluent publisher: %v, using JSONL only\n", err)
-		return jsonl
+		return jsonl, jsonl.Path()
 	}
 
-	return telemetry.NewMultiPublisher(jsonl, cp)
+	return telemetry.NewMultiPublisher(jsonl, cp), jsonl.Path()
 }
