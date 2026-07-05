@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -92,6 +93,19 @@ func defaultLinterFunc(ctx context.Context, dir string) (linter.ParseResult, err
 	return linter.Run(ctx, dir)
 }
 
+// unknownProviderEndpoints returns the [providers.<name>] keys that don't
+// name a registered provider, sorted for deterministic warnings.
+func unknownProviderEndpoints(endpoints map[string]string) []string {
+	var unknown []string
+	for name := range endpoints {
+		if _, err := provider.Get(name); err != nil {
+			unknown = append(unknown, name)
+		}
+	}
+	sort.Strings(unknown)
+	return unknown
+}
+
 func New(cfg config.Config, opts ...Option) *Agent {
 	a := &Agent{
 		cfg:      cfg,
@@ -136,6 +150,12 @@ func New(cfg config.Config, opts ...Option) *Agent {
 			a.advisorProvider = advName
 			a.advisorModel = cfg.AdvisorModel
 		}
+	}
+
+	// A [providers.<name>] section that matches no registered provider is
+	// never consulted (typically a typo); warn instead of failing silently.
+	for _, name := range unknownProviderEndpoints(cfg.ProviderEndpoints) {
+		fmt.Printf("Warning: [providers.%s] does not match a registered provider (available: %v); section ignored\n", name, provider.Available())
 	}
 
 	// Resolve the escalation ladder: rungs above the base worker, climbed

@@ -125,9 +125,8 @@ var TOMLConfigKeySet = map[string]bool{
 	"worker.model":             true,
 	"worker.api_base":          true,
 	"worker.escalation.ladder": true,
-	// [providers.<name>] keys are dynamic (keyed by provider name); the
-	// section's leaf key is api_base.
-	"providers.*.api_base":                true,
+	// [providers.<name>] keys are dynamic (keyed by provider name) and
+	// cannot be enumerated here; the section's leaf key is api_base.
 	"telemetry.backend":                   true,
 	"telemetry.dir":                       true,
 	"telemetry.confluent.brokers":         true,
