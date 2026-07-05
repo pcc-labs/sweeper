@@ -69,7 +69,20 @@ With a `[worker.escalation]` ladder configured, files that stop improving climb 
 
 When both an advisor and a ladder are configured, the advisor is told the available tiers and can pin a gnarly file to a stronger starting rung via its `tier` hint.
 
-A rung on a provider other than the worker's uses that provider's default endpoint; `api_base` only applies to the worker's own provider.
+A rung on the worker's own provider inherits the worker's `api_base`. To point a rung on a *different* provider at a non-default endpoint, add a `[providers.<name>]` section:
+
+```toml
+[worker]
+name = "claude"
+
+[worker.escalation]
+ladder = ["ollama/qwen2.5-coder:32b", "claude/claude-sonnet-5"]
+
+[providers.ollama]
+api_base = "http://gpu-box:11434"
+```
+
+Rungs consult `[providers.<name>]` whenever a more specific `api_base` doesn't apply; without an entry, the provider's default endpoint is used (e.g. `localhost:11434` for Ollama). The section also serves as the worker's own endpoint when `worker.api_base` is unset.
 
 Every `fix_attempt` telemetry event records the model and rung, and `sweeper observe` reports success rate and token spend per tier — so you learn which rung is cost-effective for which class of issue.
 

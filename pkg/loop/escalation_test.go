@@ -72,3 +72,10 @@ func TestEscalationFilesIndependent(t *testing.T) {
 		t.Errorf("expected b.go untouched at rung 0, got %d", e.Rung("b.go"))
 	}
 }
+
+func TestNewEscalationNegativeTopClampsToZero(t *testing.T) {
+	e := NewEscalation(-1)
+	if e.Top() != 0 {
+		t.Errorf("expected negative top clamped to 0, got %d", e.Top())
+	}
+}

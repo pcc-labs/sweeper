@@ -1170,6 +1170,103 @@ func TestNewAgentBuildsLadderFromConfig(t *testing.T) {
 	}
 }
 
+func TestNewAgentAdvisorUnknownProviderDisabled(t *testing.T) {
+	cfg := config.Config{
+		TargetDir:       t.TempDir(),
+		Concurrency:     1,
+		TelemetryDir:    t.TempDir(),
+		Provider:        "claude",
+		AdvisorProvider: "nonexistent-advisor-provider",
+	}
+	a := New(cfg)
+	if a.advisorExec != nil {
+		t.Error("expected advisor disabled for unknown provider")
+	}
+}
+
+func TestNewAgentLadderUnknownWorkerProviderDisablesLadder(t *testing.T) {
+	// An unregistered worker provider falls back to claude for the base
+	// executor, but bare rung entries still resolve against the configured
+	// name, fail provider lookup, and disable the ladder.
+	cfg := config.Config{
+		TargetDir:        t.TempDir(),
+		Concurrency:      1,
+		TelemetryDir:     t.TempDir(),
+		Provider:         "nonexistent-worker-provider",
+		EscalationLadder: []string{"some-model"},
+	}
+	a := New(cfg)
+	if a.ladder != nil {
+		t.Error("expected ladder disabled when rung provider lookup fails")
+	}
+}
+
+func TestNewAgentLadderCrossProviderRungUsesProviderEndpoint(t *testing.T) {
+	var captured []provider.Config
+	provider.Register(provider.Provider{
+		Name: "eptest",
+		Kind: provider.KindAPI,
+		NewExec: func(pc provider.Config) worker.Executor {
+			captured = append(captured, pc)
+			return func(ctx context.Context, task worker.Task) worker.Result { return worker.Result{} }
+		},
+	})
+	cfg := config.Config{
+		TargetDir:         t.TempDir(),
+		Concurrency:       1,
+		TelemetryDir:      t.TempDir(),
+		Provider:          "claude",
+		EscalationLadder:  []string{"eptest/big-model"},
+		ProviderEndpoints: map[string]string{"eptest": "http://gpu-box:11434"},
+	}
+	a := New(cfg)
+	if len(a.ladder) != 1 {
+		t.Fatalf("expected 1 rung, got %d", len(a.ladder))
+	}
+	if len(captured) != 1 {
+		t.Fatalf("expected 1 executor constructed on eptest, got %d", len(captured))
+	}
+	if captured[0].Model != "big-model" {
+		t.Errorf("expected rung model big-model, got %q", captured[0].Model)
+	}
+	if captured[0].APIBase != "http://gpu-box:11434" {
+		t.Errorf("expected cross-provider rung to use [providers.eptest] endpoint, got %q", captured[0].APIBase)
+	}
+}
+
+func TestNewAgentLadderOwnProviderRungKeepsWorkerAPIBase(t *testing.T) {
+	var captured []provider.Config
+	provider.Register(provider.Provider{
+		Name: "eptest2",
+		Kind: provider.KindAPI,
+		NewExec: func(pc provider.Config) worker.Executor {
+			captured = append(captured, pc)
+			return func(ctx context.Context, task worker.Task) worker.Result { return worker.Result{} }
+		},
+	})
+	cfg := config.Config{
+		TargetDir:         t.TempDir(),
+		Concurrency:       1,
+		TelemetryDir:      t.TempDir(),
+		Provider:          "eptest2",
+		ProviderAPI:       "http://localhost:11434",
+		EscalationLadder:  []string{"bigger-model"},
+		ProviderEndpoints: map[string]string{"eptest2": "http://gpu-box:11434"},
+	}
+	New(cfg)
+	// NewExec runs twice on eptest2: base worker, then the rung.
+	if len(captured) != 2 {
+		t.Fatalf("expected 2 executors constructed on eptest2, got %d", len(captured))
+	}
+	rung := captured[1]
+	if rung.Model != "bigger-model" {
+		t.Errorf("expected rung model bigger-model, got %q", rung.Model)
+	}
+	if rung.APIBase != "http://localhost:11434" {
+		t.Errorf("expected worker api_base to win for own-provider rung, got %q", rung.APIBase)
+	}
+}
+
 func TestNewAgentLadderDisabledInVMMode(t *testing.T) {
 	cfg := config.Config{
 		TargetDir:        t.TempDir(),

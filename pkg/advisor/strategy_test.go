@@ -50,3 +50,11 @@ func TestResolveStrategyEmptyHintFallsBack(t *testing.T) {
 		t.Errorf("expected standard, got %s", got)
 	}
 }
+
+func TestResolveStrategyHonorsRetryWithHistory(t *testing.T) {
+	fh := loop.FileHistory{Rounds: []loop.RoundResult{{Fixed: 1}}}
+	got := ResolveStrategy("retry", 1, fh, 99)
+	if got != loop.StrategyRetry {
+		t.Errorf("expected retry, got %s", got)
+	}
+}

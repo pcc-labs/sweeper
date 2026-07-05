@@ -159,9 +159,15 @@ func New(cfg config.Config, opts ...Option) *Agent {
 					rungs = nil
 					break
 				}
+				// A rung on the worker's own provider inherits its api_base;
+				// otherwise (or when unset) [providers.<name>] supplies the
+				// endpoint, falling back to the provider default when absent.
 				apiBase := ""
 				if rungProv == provName {
 					apiBase = cfg.ProviderAPI
+				}
+				if apiBase == "" {
+					apiBase = cfg.ProviderEndpoints[rungProv]
 				}
 				rungs = append(rungs, LadderRung{
 					Exec:     p.NewExec(provider.Config{Model: rungModel, APIBase: apiBase}),
