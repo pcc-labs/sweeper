@@ -1532,3 +1532,33 @@ func TestAdvisorExplorationHintDoesNotBumpWithoutStagnation(t *testing.T) {
 		t.Errorf("expected round 2 rung to stay 0 (advisor exploration hint without stagnation must not bump), got %d", rungs[1])
 	}
 }
+
+func TestNewAgentAdvisorUnknownProviderDisabled(t *testing.T) {
+	cfg := config.Config{
+		TargetDir:       t.TempDir(),
+		Concurrency:     1,
+		TelemetryDir:    t.TempDir(),
+		Provider:        "claude",
+		AdvisorProvider: "nope",
+	}
+	a := New(cfg)
+	if a.advisorExec != nil {
+		t.Error("expected advisor disabled for unknown provider")
+	}
+}
+
+func TestNewAgentLadderUnknownDefaultProviderDisablesLadder(t *testing.T) {
+	// A bare rung entry runs on the worker's provider; when that provider is
+	// unregistered the rung cannot be constructed and the ladder is disabled.
+	cfg := config.Config{
+		TargetDir:        t.TempDir(),
+		Concurrency:      1,
+		TelemetryDir:     t.TempDir(),
+		Provider:         "bogus",
+		EscalationLadder: []string{"some-model"},
+	}
+	a := New(cfg)
+	if a.ladder != nil {
+		t.Error("expected ladder disabled when rung provider is unknown")
+	}
+}
