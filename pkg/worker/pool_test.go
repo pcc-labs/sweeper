@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -208,6 +209,56 @@ func TestPoolRateLimitRespectsContextCancelStream(t *testing.T) {
 	pool := NewPoolWithRateLimit(3, 5*time.Second, executor)
 	ch := pool.RunStream(ctx, tasks)
 	for range ch {
+	}
+}
+
+// Cancellation observed at the rate-limit gate must stop dispatching the
+// remaining tasks, not burst-dispatch them with a dead context. The first
+// task has no gate, so exactly one executor call is expected.
+func TestPoolRateLimitCancelStopsDispatchStream(t *testing.T) {
+	tasks := make([]Task, 3)
+	for i := range tasks {
+		tasks[i] = Task{ID: i, File: fmt.Sprintf("%d.go", i)}
+	}
+	var calls atomic.Int64
+	executor := func(ctx context.Context, task Task) Result {
+		calls.Add(1)
+		return Result{Success: true}
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	pool := NewPoolWithRateLimit(3, 5*time.Second, executor)
+	var results int
+	for range pool.RunStream(ctx, tasks) {
+		results++
+	}
+	if got := calls.Load(); got != 1 {
+		t.Errorf("expected 1 executor call after cancellation, got %d", got)
+	}
+	if results != 1 {
+		t.Errorf("expected 1 result after cancellation, got %d", results)
+	}
+}
+
+func TestPoolRateLimitCancelStopsDispatchRun(t *testing.T) {
+	tasks := make([]Task, 3)
+	for i := range tasks {
+		tasks[i] = Task{ID: i, File: fmt.Sprintf("%d.go", i)}
+	}
+	var calls atomic.Int64
+	executor := func(ctx context.Context, task Task) Result {
+		calls.Add(1)
+		return Result{Success: true}
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	pool := NewPoolWithRateLimit(3, 5*time.Second, executor)
+	results := pool.Run(ctx, tasks)
+	if got := calls.Load(); got != 1 {
+		t.Errorf("expected 1 executor call after cancellation, got %d", got)
+	}
+	if len(results) != 1 {
+		t.Errorf("expected results only for dispatched tasks, got %d", len(results))
 	}
 }
 

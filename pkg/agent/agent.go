@@ -57,6 +57,19 @@ type Agent struct {
 	advisorModel    string
 	ladder          []LadderRung
 	vmExecFactory   func(model string) worker.Executor
+
+	// backoffFn computes the inter-round wait; tests override it to avoid
+	// real multi-second sleeps.
+	backoffFn func(round int) time.Duration
+}
+
+// defaultBackoff spaces rounds exponentially: 5s, 10s, 20s, ... capped at 60s.
+func defaultBackoff(round int) time.Duration {
+	backoff := time.Duration(5<<uint(round)) * time.Second
+	if backoff > 60*time.Second {
+		backoff = 60 * time.Second
+	}
+	return backoff
 }
 
 type Option func(*Agent)
@@ -117,9 +130,10 @@ func unknownProviderEndpoints(endpoints map[string]string) []string {
 
 func New(cfg config.Config, opts ...Option) *Agent {
 	a := &Agent{
-		cfg:      cfg,
-		linterFn: defaultLinterFunc,
-		pub:      telemetry.NewJSONLPublisher(cfg.TelemetryDir),
+		cfg:       cfg,
+		linterFn:  defaultLinterFunc,
+		pub:       telemetry.NewJSONLPublisher(cfg.TelemetryDir),
+		backoffFn: defaultBackoff,
 	}
 
 	// Options apply before cfg resolution so injected executors take
@@ -507,16 +521,17 @@ func (a *Agent) runParsed(ctx context.Context, result linter.ParseResult, linter
 			break
 		}
 
-		// Exponential backoff between rounds: 5s, 10s, 20s, ...
-		backoff := time.Duration(5<<uint(round)) * time.Second
-		if backoff > 60*time.Second {
-			backoff = 60 * time.Second
-		}
+		backoff := a.backoffFn(round)
 		fmt.Printf("Backoff: waiting %s before next round...\n", backoff)
 		select {
 		case <-ctx.Done():
-			break
 		case <-time.After(backoff):
+		}
+		// A bare break in the select would only exit the select; check the
+		// context to stop the sweep instead of dispatching another round
+		// with a dead context.
+		if ctx.Err() != nil {
+			break
 		}
 
 		// Filter to retryable issues

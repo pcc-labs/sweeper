@@ -30,8 +30,12 @@ func (p *Pool) RunStream(ctx context.Context, tasks []Task) <-chan Result {
 		if i > 0 && p.rateLimit > 0 {
 			select {
 			case <-ctx.Done():
-				break
 			case <-time.After(p.rateLimit):
+			}
+			// A bare break here would only exit the select; check the
+			// context to stop dispatching the remaining tasks.
+			if ctx.Err() != nil {
+				break
 			}
 		}
 		wg.Add(1)
@@ -66,12 +70,18 @@ func (p *Pool) Run(ctx context.Context, tasks []Task) []Result {
 	results := make([]Result, len(tasks))
 	var wg sync.WaitGroup
 	sem := make(chan struct{}, p.maxWorkers)
+	dispatched := len(tasks)
 	for i, task := range tasks {
 		if i > 0 && p.rateLimit > 0 {
 			select {
 			case <-ctx.Done():
-				break
 			case <-time.After(p.rateLimit):
+			}
+			// A bare break here would only exit the select; check the
+			// context to stop dispatching the remaining tasks.
+			if ctx.Err() != nil {
+				dispatched = i
+				break
 			}
 		}
 		wg.Add(1)
@@ -83,5 +93,7 @@ func (p *Pool) Run(ctx context.Context, tasks []Task) []Result {
 		}(i, task)
 	}
 	wg.Wait()
-	return results
+	// Only dispatched tasks have results; never return zero-value entries
+	// for tasks that were skipped after cancellation.
+	return results[:dispatched]
 }

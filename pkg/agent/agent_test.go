@@ -291,55 +291,118 @@ func TestAgentRunMultiRoundWithRetry(t *testing.T) {
 	}
 }
 
-// Results stream back in completion order, not task order. Task order is
-// a.go then b.go (GroupByFile sorts by file); the executor holds a.go until
-// b.go has finished so results arrive reversed. Pairing per-file state with
-// results by index would credit a.go's issue count to b.go and misreport
-// the fixed tally (issue #26). Asserts per-file outcomes, never order.
+// capturingPublisher records telemetry events in publish order.
+type capturingPublisher struct {
+	mu     sync.Mutex
+	events []telemetry.Event
+}
+
+func (p *capturingPublisher) Publish(_ context.Context, e telemetry.Event) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.events = append(p.events, e)
+	return nil
+}
+
+func (p *capturingPublisher) Close() error { return nil }
+
+// fixAttempts returns the (file, strategy) pairs of fix_attempt events for
+// one published round, in publish order (= result completion order).
+func (p *capturingPublisher) fixAttempts(round int) [][2]string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	var out [][2]string
+	for _, e := range p.events {
+		if e.Type == "fix_attempt" && e.Data["round"] == round {
+			out = append(out, [2]string{e.Data["file"].(string), e.Data["strategy"].(string)})
+		}
+	}
+	return out
+}
+
+// Results stream back in completion order, not task order (issue #26). Task
+// order is a.go then b.go (GroupByFile sorts by file); the executor holds
+// a.go until b.go's same-round execution has finished, so results arrive
+// reversed in every round. Pairing per-file state with results by index
+// would credit each file with the other's strategy and issue count.
+//
+// Round 1: a.go has 3 issues, b.go has 2, both strategy "standard".
+// Re-lint: a.go still 3 (stale), b.go down to 1 (improved). With
+// StaleThreshold 1, round 2 gives a.go "exploration" and b.go "retry" —
+// distinct per-file strategies that pin the fix_attempt publishing loop.
+// The fixed tally (re-lint deltas against each task's issue count) pins the
+// accounting loop. All assertions are on per-file outcomes; the only order
+// check validates that the fixture really delivered b.go's result first.
 func TestAgentRunAttributionWithReorderedCompletions(t *testing.T) {
-	issues := []linter.Issue{
+	issuesR1 := []linter.Issue{
 		{File: "a.go", Line: 1, Linter: "revive", Message: "msg1"},
 		{File: "a.go", Line: 2, Linter: "revive", Message: "msg2"},
 		{File: "a.go", Line: 3, Linter: "revive", Message: "msg3"},
 		{File: "b.go", Line: 1, Linter: "revive", Message: "msg4"},
+		{File: "b.go", Line: 2, Linter: "revive", Message: "msg5"},
 	}
-	remaining := []linter.Issue{
+	issuesR2 := []linter.Issue{
 		{File: "a.go", Line: 1, Linter: "revive", Message: "msg1"},
 		{File: "a.go", Line: 2, Linter: "revive", Message: "msg2"},
 		{File: "a.go", Line: 3, Linter: "revive", Message: "msg3"},
+		{File: "b.go", Line: 2, Linter: "revive", Message: "msg5"},
 	}
 	callCount := 0
 	fakeLinter := func(ctx context.Context, dir string) (linter.ParseResult, error) {
 		callCount++
 		switch callCount {
 		case 1:
-			return linter.ParseResult{Issues: issues, Parsed: true}, nil
+			return linter.ParseResult{Issues: issuesR1, Parsed: true}, nil
 		case 2:
-			// Round 1 fixed b.go only; a.go untouched.
-			return linter.ParseResult{Issues: remaining, Parsed: true}, nil
+			return linter.ParseResult{Issues: issuesR2, Parsed: true}, nil
 		default:
 			return linter.ParseResult{Parsed: true}, nil
 		}
 	}
-	bDone := make(chan struct{})
-	var once sync.Once
+
+	// Per-round gates: a.go's Nth execution blocks until b.go's Nth
+	// execution has returned, then grace-sleeps so b's in-flight channel
+	// send lands first. The gate holds a pool semaphore slot while blocked,
+	// so Concurrency must be >= 2 for the round to make progress at all.
+	// If the grace window ever loses the race, the completion-order guard
+	// below fails loudly instead of the test silently passing.
+	var mu sync.Mutex
+	bFinished := []chan struct{}{make(chan struct{}), make(chan struct{})}
+	aCalls, bCalls := 0, 0
 	fakeExecutor := func(ctx context.Context, task worker.Task) worker.Result {
+		mu.Lock()
+		var n int
 		if task.File == "b.go" {
-			once.Do(func() { close(bDone) })
-			return worker.Result{TaskID: task.ID, File: task.File, Success: true, IssuesFix: len(task.Issues), Output: "fixed b"}
+			n = bCalls
+			bCalls++
+		} else {
+			n = aCalls
+			aCalls++
 		}
-		<-bDone
-		time.Sleep(100 * time.Millisecond)
-		return worker.Result{TaskID: task.ID, File: task.File, Success: true, IssuesFix: len(task.Issues), Output: "attempt a"}
+		mu.Unlock()
+		if task.File == "b.go" {
+			defer close(bFinished[n])
+			return worker.Result{TaskID: task.ID, File: task.File, Success: true, IssuesFix: len(task.Issues), Output: "b attempt"}
+		}
+		select {
+		case <-bFinished[n]:
+			time.Sleep(100 * time.Millisecond)
+		case <-time.After(10 * time.Second):
+			return worker.Result{TaskID: task.ID, File: task.File, Success: false, Error: "gate timeout: b.go never ran"}
+		}
+		return worker.Result{TaskID: task.ID, File: task.File, Success: true, IssuesFix: len(task.Issues), Output: "a attempt"}
 	}
+
+	pub := &capturingPublisher{}
 	cfg := config.Config{
 		TargetDir:      t.TempDir(),
-		Concurrency:    2,
+		Concurrency:    2, // load-bearing: the a.go gate deadlocks at 1
 		TelemetryDir:   t.TempDir(),
 		MaxRounds:      3,
-		StaleThreshold: 2,
+		StaleThreshold: 1,
 	}
-	a := New(cfg, WithLinterFunc(fakeLinter), WithExecutor(fakeExecutor))
+	a := New(cfg, WithLinterFunc(fakeLinter), WithExecutor(fakeExecutor), WithPublisher(pub))
+	a.backoffFn = func(int) time.Duration { return time.Millisecond }
 	summary, err := a.Run(context.Background())
 	if err != nil {
 		t.Fatal(err)
@@ -347,9 +410,29 @@ func TestAgentRunAttributionWithReorderedCompletions(t *testing.T) {
 	if summary.Rounds != 2 {
 		t.Errorf("expected 2 rounds, got %d", summary.Rounds)
 	}
-	// Round 1: b.go 1->0 (+1), a.go 3->3 (+0). Round 2: a.go 3->0 (+3).
-	if summary.Fixed != 4 {
-		t.Errorf("expected 4 fixed with correct per-file attribution, got %d", summary.Fixed)
+	// Round 1: a.go 3->3 (+0), b.go 2->1 (+1). Round 2: a.go 3->0 (+3),
+	// b.go 1->0 (+1). Index pairing of the reversed results would tally 6.
+	if summary.Fixed != 5 {
+		t.Errorf("expected 5 fixed with correct per-file attribution, got %d", summary.Fixed)
+	}
+
+	for round, want := range map[int]map[string]string{
+		1: {"a.go": "standard", "b.go": "standard"},
+		2: {"a.go": "exploration", "b.go": "retry"},
+	} {
+		got := pub.fixAttempts(round)
+		if len(got) != 2 {
+			t.Fatalf("round %d: expected 2 fix_attempt events, got %v", round, got)
+		}
+		// Fixture validity: b.go's result really was received first.
+		if got[0][0] != "b.go" {
+			t.Errorf("round %d: fixture failed to reorder completions, got order %v", round, got)
+		}
+		for _, fa := range got {
+			if want[fa[0]] != fa[1] {
+				t.Errorf("round %d: file %s published strategy %q, want %q", round, fa[0], fa[1], want[fa[0]])
+			}
+		}
 	}
 }
 
@@ -422,6 +505,7 @@ func TestAgentRunReLintError(t *testing.T) {
 
 func TestAgentRunBackoffRespectsContextCancel(t *testing.T) {
 	callCount := 0
+	execCalls := 0
 	issues := []linter.Issue{
 		{File: "a.go", Line: 1, Linter: "revive", Message: "msg"},
 	}
@@ -435,6 +519,7 @@ func TestAgentRunBackoffRespectsContextCancel(t *testing.T) {
 		return linter.ParseResult{Issues: issues, Parsed: true}, nil
 	}
 	fakeExecutor := func(ctx context.Context, task worker.Task) worker.Result {
+		execCalls++
 		return worker.Result{TaskID: task.ID, File: task.File, Success: true, IssuesFix: 1, Output: "ok"}
 	}
 	cfg := config.Config{
@@ -445,39 +530,33 @@ func TestAgentRunBackoffRespectsContextCancel(t *testing.T) {
 		StaleThreshold: 2,
 	}
 	a := New(cfg, WithLinterFunc(fakeLinter), WithExecutor(fakeExecutor))
-	// Should complete quickly despite backoff because context is cancelled
-	_, _ = a.Run(ctx)
+	summary, err := a.Run(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Cancellation during backoff must stop the sweep, not dispatch
+	// further rounds with a dead context.
+	if summary.Rounds != 1 {
+		t.Errorf("expected 1 round after cancellation, got %d", summary.Rounds)
+	}
+	if execCalls != 1 {
+		t.Errorf("expected 1 executor call after cancellation, got %d", execCalls)
+	}
 }
 
-func TestAgentRunBackoffCapsAt60s(t *testing.T) {
-	issues := []linter.Issue{
-		{File: "a.go", Line: 1, Linter: "revive", Message: "msg"},
+func TestDefaultBackoff(t *testing.T) {
+	want := map[int]time.Duration{
+		0: 5 * time.Second,
+		1: 10 * time.Second,
+		2: 20 * time.Second,
+		3: 40 * time.Second,
+		4: 60 * time.Second, // 80s capped
+		5: 60 * time.Second,
 	}
-	ctx, cancel := context.WithCancel(context.Background())
-	callCount := 0
-	fakeLinter := func(ctx context.Context, dir string) (linter.ParseResult, error) {
-		callCount++
-		if callCount == 1 {
-			return linter.ParseResult{Issues: issues, Parsed: true}, nil
+	for round, d := range want {
+		if got := defaultBackoff(round); got != d {
+			t.Errorf("round %d: expected %s, got %s", round, d, got)
 		}
-		cancel() // cancel so backoff waits are instant
-		return linter.ParseResult{Issues: issues, Parsed: true}, nil
-	}
-	fakeExecutor := func(ctx context.Context, task worker.Task) worker.Result {
-		return worker.Result{TaskID: task.ID, File: task.File, Success: false, Error: "nope", Output: "nope"}
-	}
-	cfg := config.Config{
-		TargetDir:      t.TempDir(),
-		Concurrency:    1,
-		TelemetryDir:   t.TempDir(),
-		MaxRounds:      6,
-		StaleThreshold: 99, // prevent exploration so all rounds run
-	}
-	a := New(cfg, WithLinterFunc(fakeLinter), WithExecutor(fakeExecutor))
-	summary, _ := a.Run(ctx)
-	// Should reach enough rounds to trigger the 60s cap (round 4: 5<<4=80 > 60)
-	if summary.Rounds < 5 {
-		t.Errorf("expected at least 5 rounds to exercise backoff cap, got %d", summary.Rounds)
 	}
 }
 
