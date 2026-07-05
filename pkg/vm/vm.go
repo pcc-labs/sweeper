@@ -9,10 +9,10 @@ import (
 	"path/filepath"
 )
 
-type cmdRunner func(name string, args ...string) ([]byte, error)
+type cmdRunner func(ctx context.Context, name string, args ...string) ([]byte, error)
 
-func defaultRunner(name string, args ...string) ([]byte, error) {
-	return exec.Command(name, args...).CombinedOutput()
+func defaultRunner(ctx context.Context, name string, args ...string) ([]byte, error) {
+	return exec.CommandContext(ctx, name, args...).CombinedOutput()
 }
 
 // VM represents a stereOS virtual machine managed by mb.
@@ -41,7 +41,7 @@ func boot(name, hostDir, jcardDir string, runner cmdRunner) (*VM, error) {
 	if err != nil {
 		return nil, err
 	}
-	out, err := runner("mb", "up", "--config", jcardPath)
+	out, err := runner(context.Background(), "mb", "up", "--config", jcardPath)
 	if err != nil {
 		CleanupJcard(jcardPath)
 		return nil, fmt.Errorf("mb up failed: %w\n%s", err, out)
@@ -69,7 +69,7 @@ func Attach(name, hostDir string) *VM {
 func (v *VM) Exec(ctx context.Context, args ...string) ([]byte, error) {
 	mbArgs := []string{"ssh", "--user", "agent", v.Name, "--"}
 	mbArgs = append(mbArgs, args...)
-	return v.runner("mb", mbArgs...)
+	return v.runner(ctx, "mb", mbArgs...)
 }
 
 // Shutdown tears down a managed VM. No-op for unmanaged VMs.
@@ -77,7 +77,7 @@ func (v *VM) Shutdown() error {
 	if !v.Managed {
 		return nil
 	}
-	out, err := v.runner("mb", "destroy", v.Name, "--yes")
+	out, err := v.runner(context.Background(), "mb", "destroy", v.Name, "--yes")
 	if err != nil {
 		return fmt.Errorf("mb destroy failed: %w\n%s", err, out)
 	}

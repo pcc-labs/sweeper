@@ -158,10 +158,9 @@ Examples:
 
 			if useVM {
 				absTarget, _ := filepath.Abs(cfg.TargetDir)
+				var vmHandle *vm.VM
 				if cfg.VMName != "" {
-					vmHandle := vm.Attach(cfg.VMName, absTarget)
-					opts = append(opts, agent.WithVM(vmHandle))
-					opts = append(opts, agent.WithExecutor(worker.NewVMExecutor(vmHandle)))
+					vmHandle = vm.Attach(cfg.VMName, absTarget)
 					fmt.Printf("VM: using existing VM %s\n", cfg.VMName)
 				} else {
 					name := vm.NewVMName()
@@ -169,14 +168,17 @@ Examples:
 					if cfg.VMJcard != "" {
 						jcardDir = filepath.Dir(cfg.VMJcard)
 					}
-					vmHandle, err := vm.Boot(name, absTarget, jcardDir)
+					booted, err := vm.Boot(name, absTarget, jcardDir)
 					if err != nil {
 						return fmt.Errorf("booting VM: %w", err)
 					}
-					opts = append(opts, agent.WithVM(vmHandle))
-					opts = append(opts, agent.WithExecutor(worker.NewVMExecutor(vmHandle)))
+					vmHandle = booted
 					fmt.Printf("VM: booted %s (managed, will teardown on exit)\n", name)
 				}
+				opts = append(opts, agent.WithVM(vmHandle))
+				opts = append(opts, agent.WithVMExecutorFactory(func(model string) worker.Executor {
+					return worker.NewVMExecutor(vmHandle, worker.VMExecConfig{Model: model})
+				}))
 			}
 
 			opts = append(opts, agent.WithPublisher(pub))

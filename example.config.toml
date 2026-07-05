@@ -40,6 +40,8 @@ name = "claude"
 # "provider/model". A file is only given up on after exploring at the top rung.
 # A rung on a different provider than the worker uses that provider's default
 # endpoint; api_base above only applies to the worker's own provider.
+# With [vm] enabled, rungs run `claude --model <rung>` inside the VM, so
+# every entry must resolve to the claude provider.
 # ladder = ["claude/claude-haiku-4-5", "claude/claude-sonnet-5"]
 
 # [advisor]
@@ -47,6 +49,7 @@ name = "claude"
 # ordering, difficulty, strategy hints) before cheap workers execute fixes.
 # The advisor sees lint output and history only — never file contents.
 # Requires a CLI provider (claude, codex). Unset = disabled (mechanical plan).
+# With [vm] enabled, the advisor runs inside the VM and must use claude.
 # name = "claude"
 # model = "claude-opus-4-8"
 

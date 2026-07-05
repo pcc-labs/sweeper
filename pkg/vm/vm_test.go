@@ -10,7 +10,7 @@ import (
 
 func TestVMBootCallsMbUp(t *testing.T) {
 	var gotArgs []string
-	runner := func(name string, args ...string) ([]byte, error) {
+	runner := func(ctx context.Context, name string, args ...string) ([]byte, error) {
 		gotArgs = append([]string{name}, args...)
 		return []byte("ok"), nil
 	}
@@ -31,7 +31,7 @@ func TestVMBootCallsMbUp(t *testing.T) {
 }
 
 func TestVMBootError(t *testing.T) {
-	runner := func(name string, args ...string) ([]byte, error) {
+	runner := func(ctx context.Context, name string, args ...string) ([]byte, error) {
 		return nil, fmt.Errorf("mb not found")
 	}
 	_, err := boot("test", "/tmp", t.TempDir(), runner)
@@ -41,7 +41,7 @@ func TestVMBootError(t *testing.T) {
 }
 
 func TestVMBootJcardError(t *testing.T) {
-	runner := func(name string, args ...string) ([]byte, error) {
+	runner := func(ctx context.Context, name string, args ...string) ([]byte, error) {
 		return []byte("ok"), nil
 	}
 	// Use a file as a path component so MkdirAll inside GenerateJcard fails.
@@ -59,7 +59,7 @@ func TestVMBootJcardError(t *testing.T) {
 
 func TestVMShutdownManaged(t *testing.T) {
 	var gotArgs []string
-	runner := func(name string, args ...string) ([]byte, error) {
+	runner := func(ctx context.Context, name string, args ...string) ([]byte, error) {
 		gotArgs = append([]string{name}, args...)
 		return nil, nil
 	}
@@ -75,7 +75,7 @@ func TestVMShutdownManaged(t *testing.T) {
 
 func TestVMShutdownUnmanaged(t *testing.T) {
 	called := false
-	runner := func(name string, args ...string) ([]byte, error) {
+	runner := func(ctx context.Context, name string, args ...string) ([]byte, error) {
 		called = true
 		return nil, nil
 	}
@@ -91,7 +91,7 @@ func TestVMShutdownUnmanaged(t *testing.T) {
 
 func TestVMExec(t *testing.T) {
 	var gotArgs []string
-	runner := func(name string, args ...string) ([]byte, error) {
+	runner := func(ctx context.Context, name string, args ...string) ([]byte, error) {
 		gotArgs = append([]string{name}, args...)
 		return []byte("output"), nil
 	}
@@ -115,7 +115,7 @@ func TestVMExec(t *testing.T) {
 }
 
 func TestVMExecError(t *testing.T) {
-	runner := func(name string, args ...string) ([]byte, error) {
+	runner := func(ctx context.Context, name string, args ...string) ([]byte, error) {
 		return []byte("err output"), fmt.Errorf("exit 1")
 	}
 	vm := &VM{Name: "test", runner: runner}
@@ -171,7 +171,7 @@ func TestWorkspacePathRelError(t *testing.T) {
 }
 
 func TestVMShutdownError(t *testing.T) {
-	runner := func(name string, args ...string) ([]byte, error) {
+	runner := func(ctx context.Context, name string, args ...string) ([]byte, error) {
 		return []byte("destroy failed"), fmt.Errorf("timeout")
 	}
 	vm := &VM{Name: "test", Managed: true, runner: runner}
@@ -190,5 +190,22 @@ func TestBootPublicAPIErrorsWithoutMb(t *testing.T) {
 	_, err := Boot("test-vm", "/tmp/proj", dir)
 	if err == nil {
 		t.Error("expected error when mb is not available")
+	}
+}
+
+func TestVMExecPropagatesContext(t *testing.T) {
+	type ctxKey struct{}
+	ctx := context.WithValue(context.Background(), ctxKey{}, "marker")
+	var gotCtx context.Context
+	runner := func(ctx context.Context, name string, args ...string) ([]byte, error) {
+		gotCtx = ctx
+		return nil, nil
+	}
+	vm := &VM{Name: "t", runner: runner}
+	if _, err := vm.Exec(ctx, "echo"); err != nil {
+		t.Fatal(err)
+	}
+	if gotCtx == nil || gotCtx.Value(ctxKey{}) != "marker" {
+		t.Error("Exec should pass its context through to the runner")
 	}
 }

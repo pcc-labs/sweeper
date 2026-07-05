@@ -388,3 +388,34 @@ func TestAnalyzeModelsEmptyModelBucketsAsDefault(t *testing.T) {
 		t.Errorf("expected empty model bucketed as (default), got %+v", insights)
 	}
 }
+
+func TestAnalyzeModelsReadError(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "unreadable.jsonl")
+	_ = os.WriteFile(path, []byte("data"), 0o644)
+	_ = os.Chmod(path, 0o000)
+	t.Cleanup(func() { _ = os.Chmod(path, 0o644) })
+
+	if _, err := New(dir).AnalyzeModels(); err == nil {
+		t.Error("expected error reading unreadable file")
+	}
+}
+
+func TestAnalyzeModelsSortsByModelOnEqualAttempts(t *testing.T) {
+	dir := t.TempDir()
+	lines := []string{
+		`{"timestamp":"2026-07-04T10:00:00Z","type":"fix_attempt","data":{"model":"zeta","provider":"claude","success":true}}`,
+		`{"timestamp":"2026-07-04T10:01:00Z","type":"fix_attempt","data":{"model":"alpha","provider":"claude","success":true}}`,
+	}
+	content := strings.Join(lines, "\n") + "\n"
+	if err := os.WriteFile(filepath.Join(dir, "events.jsonl"), []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	insights, err := New(dir).AnalyzeModels()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(insights) != 2 || insights[0].Model != "alpha" || insights[1].Model != "zeta" {
+		t.Errorf("expected tie broken by model name (alpha, zeta), got %+v", insights)
+	}
+}

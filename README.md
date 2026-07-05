@@ -71,6 +71,8 @@ When both an advisor and a ladder are configured, the advisor is told the availa
 
 A rung on a provider other than the worker's uses that provider's default endpoint; `api_base` only applies to the worker's own provider.
 
+Both work under `--vm`: rungs and the advisor dispatch `claude --model <model>` inside the VM. Because VM workers always run claude, every rung (and the advisor provider) must resolve to claude when VM isolation is on — a cross-provider rung like `ollama/...` disables the ladder with a warning.
+
 Every `fix_attempt` telemetry event records the model and rung, and `sweeper observe` reports success rate and token spend per tier — so you learn which rung is cost-effective for which class of issue.
 
 ## Setup
@@ -162,7 +164,7 @@ Sweeper supports swappable AI providers. Well-scoped tasks like lint fixes can r
 - `--model <name>` — Model override for the provider (e.g. `qwen2.5-coder:7b` for ollama)
 - `--api-base <url>` — API base URL for API providers (default: `http://localhost:11434` for ollama)
 
-VM isolation (`--vm`) is only compatible with CLI providers.
+VM isolation (`--vm`) is only compatible with CLI providers, and currently always invokes claude inside the VM (the worker `--model`, escalation rungs, and advisor model are honored).
 
 ## Examples
 
