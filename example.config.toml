@@ -26,6 +26,20 @@ name = "claude"
 # `paper start claude` so paper's gateway manages auth and captures the session
 # (no ANTHROPIC_API_KEY is used). No configuration is needed.
 
+# [worker]
+# Alias for [provider] — the fix-executing role. Non-empty worker fields win
+# over [provider], which remains supported for back-compat.
+# name = "ollama"
+# model = "qwen2.5-coder:7b"
+# api_base = "http://localhost:11434"
+
+# [worker.escalation]
+# Model escalation ladder: rungs above the base worker, climbed one step per
+# stagnation (stale_threshold non-improving rounds), keeping the exploration
+# prompt. Entries are "model" (runs on the worker's provider) or
+# "provider/model". A file is only given up on after exploring at the top rung.
+# ladder = ["claude/claude-haiku-4-5", "claude/claude-sonnet-5"]
+
 # [advisor]
 # Optional sweep-planning phase: a frontier model plans each round (task
 # ordering, difficulty, strategy hints) before cheap workers execute fixes.
