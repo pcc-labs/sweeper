@@ -10,6 +10,7 @@ func init() {
 			return worker.NewClaudeExecutor(worker.ClaudeConfig{
 				Model:     cfg.Model,
 				ExtraArgs: cfg.ExtraArgs,
+				Capture:   cfg.Capture,
 			})
 		},
 	})

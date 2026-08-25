@@ -12,6 +12,16 @@ type TOMLConfig struct {
 	Providers map[string]ProviderEndpoint `toml:"providers"`
 	Telemetry TelemetryConfig             `toml:"telemetry"`
 	VM        VMSectionConfig             `toml:"vm"`
+	Capture   CaptureSectionConfig        `toml:"capture"`
+}
+
+// CaptureSectionConfig selects the session-capture gateway for sub-agents:
+// "auto" (default) wraps CLI agents with paperctl when installed, "paper"
+// requires it, "tapes" points sub-agent traffic at the tapes proxy, "none"
+// runs agents bare on their own login.
+type CaptureSectionConfig struct {
+	Mode       string `toml:"mode"`
+	TapesProxy string `toml:"tapes_proxy"`
 }
 
 // ProviderEndpoint holds per-provider connection settings, keyed by provider
@@ -143,4 +153,6 @@ var TOMLConfigKeySet = map[string]bool{
 	"vm.enabled":                          true,
 	"vm.name":                             true,
 	"vm.jcard":                            true,
+	"capture.mode":                        true,
+	"capture.tapes_proxy":                 true,
 }

@@ -103,7 +103,7 @@ Before running sweeper, ensure these are available:
 
 1. **pi** - The pi coding agent CLI must be in PATH for the default provider. The tool invokes `pi -p [--model <m>] <prompt>` for each fix task; models resolve through pi's registry (`~/.pi/agent/models.json`). With `--provider claude`, the Claude Code CLI is required instead (invoked as `claude --print --dangerously-skip-permissions <prompt>`).
 2. **golangci-lint** (only for default mode) - Must be in PATH. Install: `go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest`
-3. **paper** (optional) - When the `paper` CLI is installed (`paper init` to bring up the daemon), sweeper launches each claude sub-agent via `paper start claude`, so paper's gateway manages auth and captures the session (no `ANTHROPIC_API_KEY` used). Sweeper detects the `paper` CLI and warns if it's missing.
+3. **paper** (optional) - When the `paper` CLI is installed (`paper init` to bring up the daemon), sweeper launches each claude sub-agent via `paperctl start claude`, so paper's gateway manages auth and captures the session (no `ANTHROPIC_API_KEY` used). Sweeper detects the `paper` CLI and warns if it's missing.
 4. **mb** (optional, for `--vm` mode) - Masterblaster CLI for stereOS VMs. Required only when using `--vm` flag.
 
 When using `-- <command>` or piped input, golangci-lint is not required.

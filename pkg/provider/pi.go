@@ -10,6 +10,7 @@ func init() {
 			return worker.NewPiExecutor(worker.PiConfig{
 				Model:     cfg.Model,
 				ExtraArgs: cfg.ExtraArgs,
+				Capture:   cfg.Capture,
 			})
 		},
 	})

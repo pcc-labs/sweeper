@@ -27,9 +27,10 @@ name = "pi"
 # any model registered there — cloud providers, local Ollama variants, or a
 # semantic router like vllm-sr/auto — is reachable by name with no endpoint
 # config on the sweeper side. Provider credentials come from pi's environment.
-# With name = "claude": when the paper CLI is installed, sweeper launches
-# claude sub-agents via `paper start claude` so paper's gateway manages auth
-# and captures the session (no ANTHROPIC_API_KEY is used).
+# With name = "claude": under the default capture mode (auto), sweeper
+# launches claude sub-agents via `paperctl start claude` when the paperctl
+# CLI is installed, so paper's gateway manages auth and captures the session
+# (no ANTHROPIC_API_KEY is used). See [capture] to swap gateways.
 
 # [worker]
 # Alias for [provider] — the fix-executing role. Non-empty worker fields win
@@ -69,6 +70,18 @@ name = "pi"
 # With [vm] enabled, the advisor runs inside the VM and must use claude.
 # name = "claude"
 # model = "claude-opus-4-8"
+
+# [capture]
+# Session-capture gateway for sub-agent runs; swap between paper and tapes
+# as needed.
+#   auto  (default) wrap CLI agents with paperctl when installed (legacy
+#         `paper` binary also detected); pi runs bare (it owns its providers)
+#   paper require paperctl; wraps `paperctl start claude|pi -- ...`
+#   tapes point sub-agent Anthropic traffic at the tapes proxy
+#         (`tapes start` must be running; claude keeps its own login)
+#   none  run agents bare on their own login, no capture
+# mode = "auto"
+# tapes_proxy = "http://localhost:8080"   # match `tapes start`'s proxy port
 
 [telemetry]
 # backend: "jsonl" (default, always active) or "confluent" (adds Kafka fan-out)

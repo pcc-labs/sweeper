@@ -30,6 +30,8 @@ func newRunCmd() *cobra.Command {
 	var providerName string
 	var providerModel string
 	var providerAPI string
+	var captureMode string
+	var captureTapesProxy string
 	var advisorProvider string
 	var advisorModel string
 	cmd := &cobra.Command{
@@ -82,6 +84,12 @@ Examples:
 				tc.Provider.APIBase = providerAPI
 				tc.Worker.APIBase = providerAPI
 			}
+			if cmd.Flags().Changed("capture") {
+				tc.Capture.Mode = captureMode
+			}
+			if cmd.Flags().Changed("capture-tapes-proxy") {
+				tc.Capture.TapesProxy = captureTapesProxy
+			}
 			if cmd.Flags().Changed("advisor-provider") {
 				tc.Advisor.Name = advisorProvider
 			}
@@ -105,6 +113,16 @@ Examples:
 			// Validate provider exists before proceeding.
 			if _, err := provider.Get(cfg.Provider); err != nil {
 				return err
+			}
+
+			// Validate capture mode; explicit paper capture needs the CLI.
+			if !worker.ValidCaptureMode(cfg.CaptureMode) {
+				return fmt.Errorf("invalid capture mode %q (valid: auto, paper, tapes, none)", cfg.CaptureMode)
+			}
+			if cfg.CaptureMode == worker.CaptureModePaper {
+				if _, ok := worker.PaperBinary(); !ok {
+					return fmt.Errorf("capture mode %q requires the paperctl CLI on PATH", cfg.CaptureMode)
+				}
 			}
 
 			piped := isPiped()
@@ -206,6 +224,8 @@ Examples:
 	cmd.Flags().StringVar(&providerAPI, "api-base", "", "API base URL for API providers (e.g. http://localhost:11434)")
 	cmd.Flags().StringVar(&advisorProvider, "advisor-provider", "", "provider for the sweep-planning advisor (claude, codex; enables the advisor phase)")
 	cmd.Flags().StringVar(&advisorModel, "advisor-model", "", "model for the sweep-planning advisor (e.g. claude-opus-4-8)")
+	cmd.Flags().StringVar(&captureMode, "capture", "auto", "session-capture gateway: auto (paperctl when installed), paper, tapes, none")
+	cmd.Flags().StringVar(&captureTapesProxy, "capture-tapes-proxy", "", "tapes proxy URL for --capture tapes (default http://localhost:8080)")
 	return cmd
 }
 

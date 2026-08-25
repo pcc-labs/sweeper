@@ -24,6 +24,8 @@ type Config struct {
 	ProviderEndpoints map[string]string   // per-provider api_base from [providers.<name>], for rungs off the worker's provider
 	ProviderArgs      []string            // extra CLI args for the worker's executor, from worker/provider extra_args
 	ProviderExtraArgs map[string][]string // per-provider extra_args from [providers.<name>], for rungs/advisor off the worker's provider
+	CaptureMode       string              // session-capture gateway: auto (default), paper, tapes, none
+	CaptureTapesProxy string              // tapes proxy URL injected as ANTHROPIC_BASE_URL in tapes mode
 }
 
 // MaxConcurrency is the hard ceiling for parallel sub-agents regardless of
@@ -89,6 +91,8 @@ func FromTOML(tc TOMLConfig) Config {
 		ProviderEndpoints: endpoints,
 		ProviderArgs:      firstNonEmptySlice(tc.Worker.ExtraArgs, tc.Provider.ExtraArgs, extraArgs[name]),
 		ProviderExtraArgs: extraArgs,
+		CaptureMode:       tc.Capture.Mode,
+		CaptureTapesProxy: tc.Capture.TapesProxy,
 	}
 }
 

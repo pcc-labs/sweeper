@@ -8,8 +8,9 @@ import (
 
 // PiConfig holds settings for the pi executor.
 type PiConfig struct {
-	Model     string   // a model registered with pi (~/.pi/agent/models.json); empty uses pi's default
-	ExtraArgs []string // additional CLI arguments passed before the prompt (e.g. -e extension.ts)
+	Model     string        // a model registered with pi (~/.pi/agent/models.json); empty uses pi's default
+	ExtraArgs []string      // additional CLI arguments passed before the prompt (e.g. -e extension.ts)
+	Capture   CaptureConfig // session-capture gateway (paper, tapes, none)
 }
 
 // NewPiExecutor returns an Executor that invokes the pi coding agent CLI in
@@ -32,7 +33,25 @@ func NewPiExecutor(cfg PiConfig) Executor {
 		}
 		args = append(args, cfg.ExtraArgs...)
 		args = append(args, prompt)
-		cmd := exec.CommandContext(ctx, "pi", args...)
+		var cmd *exec.Cmd
+		switch cfg.Capture.Mode {
+		case CaptureModePaper:
+			if paperPath, ok := PaperBinary(); ok {
+				// paperctl start supports pi; the gateway owns auth, so the
+				// inherited Anthropic env is stripped like the claude path.
+				cmd = exec.CommandContext(ctx, paperPath, append([]string{"start", "pi", "--"}, args...)...)
+				cmd.Env = childEnv()
+			} else {
+				cmd = exec.CommandContext(ctx, "pi", args...)
+			}
+		case CaptureModeTapes:
+			cmd = exec.CommandContext(ctx, "pi", args...)
+			cmd.Env = envWith("ANTHROPIC_BASE_URL", cfg.Capture.proxyOrDefault())
+		default:
+			// auto/none: pi owns its providers and credentials; pass the
+			// environment through unchanged.
+			cmd = exec.CommandContext(ctx, "pi", args...)
+		}
 		cmd.Dir = task.Dir
 		out, err := cmd.CombinedOutput()
 		duration := time.Since(start)

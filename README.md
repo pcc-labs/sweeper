@@ -175,6 +175,20 @@ The `pi` provider is the flexibility play: pi resolves `--model` through its own
 
 **API providers** (ollama) are text-in, text-out. Sweeper includes file content in the prompt and applies the returned unified diff via `patch`.
 
+### Session capture
+
+Sub-agent sessions can be recorded by [paper](https://papercompute.com) or [tapes](https://tapes.dev), swappable per run with `--capture` or `[capture]` in config:
+
+- `auto` (default) — wrap CLI agents with `paperctl start <agent>` when the paperctl CLI is installed (the legacy `paper` binary is also detected); pi runs bare otherwise since it owns its own providers.
+- `paper` — require paperctl; claude and pi sub-agents launch via `paperctl start claude|pi -- ...` so paper's gateway owns auth and capture.
+- `tapes` — point sub-agent Anthropic traffic at the tapes proxy (`--capture-tapes-proxy` / `capture.tapes_proxy`, default `http://localhost:8080` — match the port `tapes start` prints). claude keeps its own login with only the base URL re-pointed; pi keeps its full environment with the base URL overridden.
+- `none` — run agents bare on their own login, no capture.
+
+```bash
+sweeper run --capture tapes --capture-tapes-proxy http://127.0.0.1:38967
+sweeper run --capture paper --provider claude
+```
+
 ### Provider flags
 
 - `--provider <name>` — AI provider to use (default: `pi`)

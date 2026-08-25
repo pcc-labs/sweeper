@@ -10,8 +10,9 @@ import (
 
 // anthropicEnvVars are stripped from every spawned sub-agent's environment so
 // agents never authenticate with an inherited API token. When launched via
-// `paper start`, paper's gateway owns authentication; when paper is absent,
-// claude falls back to its own logged-in session.
+// `paperctl start`, paper's gateway owns authentication; when paper is
+// absent, claude falls back to its own logged-in session. In tapes capture
+// mode the base URL is re-pointed at the tapes proxy after stripping.
 var anthropicEnvVars = map[string]bool{
 	"ANTHROPIC_API_KEY":  true,
 	"ANTHROPIC_BASE_URL": true,
@@ -35,10 +36,11 @@ func childEnv() []string {
 	return env
 }
 
-// claudeCommand builds the command that runs a claude sub-agent. When the paper
-// CLI is available the agent is launched via `paper start claude` so paper's
-// gateway manages authentication and captures the session; otherwise it falls
-// back to invoking claude directly (using claude's own login, without capture).
+// claudeCommand builds the command that runs a claude sub-agent. Capture
+// mode decides the wrapping: "paper" (and "auto" when the paperctl CLI is
+// installed) launches via `paperctl start claude` so paper's gateway manages
+// authentication and captures the session; "tapes" and "none" invoke claude
+// directly — tapes capture happens via the proxy env set in the executor.
 func claudeCommand(ctx context.Context, cfg ClaudeConfig, prompt string) *exec.Cmd {
 	args := []string{"--print", "--dangerously-skip-permissions"}
 	if cfg.Model != "" {
@@ -46,7 +48,14 @@ func claudeCommand(ctx context.Context, cfg ClaudeConfig, prompt string) *exec.C
 	}
 	args = append(args, cfg.ExtraArgs...)
 	args = append(args, prompt)
-	if paperPath, err := exec.LookPath("paper"); err == nil {
+	switch cfg.Capture.Mode {
+	case CaptureModeTapes, CaptureModeNone:
+		return exec.CommandContext(ctx, "claude", args...)
+	}
+	// paper and auto: wrap when the CLI is present. Explicit paper mode with
+	// no CLI is rejected up front in cmd/run.go; falling through to a bare
+	// claude here is a defensive last resort.
+	if paperPath, ok := PaperBinary(); ok {
 		return exec.CommandContext(ctx, paperPath, append([]string{"start", "claude", "--"}, args...)...)
 	}
 	return exec.CommandContext(ctx, "claude", args...)
@@ -54,8 +63,9 @@ func claudeCommand(ctx context.Context, cfg ClaudeConfig, prompt string) *exec.C
 
 // ClaudeConfig holds settings for the claude executor.
 type ClaudeConfig struct {
-	Model     string   // e.g. "claude-haiku-4-5"; empty uses the CLI's default
-	ExtraArgs []string // additional CLI arguments passed before the prompt
+	Model     string        // e.g. "claude-haiku-4-5"; empty uses the CLI's default
+	ExtraArgs []string      // additional CLI arguments passed before the prompt
+	Capture   CaptureConfig // session-capture gateway (paper, tapes, none)
 }
 
 // NewClaudeExecutor returns an Executor that runs claude sub-agents through
@@ -70,7 +80,13 @@ func NewClaudeExecutor(cfg ClaudeConfig) Executor {
 		}
 		cmd := claudeCommand(ctx, cfg, prompt)
 		cmd.Dir = task.Dir
-		cmd.Env = childEnv()
+		env := childEnv()
+		if cfg.Capture.Mode == CaptureModeTapes {
+			// Auth stays stripped (claude uses its own login); only the
+			// base URL is re-pointed so traffic records in tapes.
+			env = append(env, "ANTHROPIC_BASE_URL="+cfg.Capture.proxyOrDefault())
+		}
+		cmd.Env = env
 		out, err := cmd.CombinedOutput()
 		duration := time.Since(start)
 		if err != nil {

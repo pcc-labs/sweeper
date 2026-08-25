@@ -115,6 +115,12 @@ func defaultLinterFunc(ctx context.Context, dir string) (linter.ParseResult, err
 	return linter.Run(ctx, dir)
 }
 
+// captureConfig maps the runtime config's capture fields into the worker's
+// CaptureConfig, shared by the base worker, advisor, and ladder rungs.
+func captureConfig(cfg config.Config) worker.CaptureConfig {
+	return worker.CaptureConfig{Mode: cfg.CaptureMode, TapesProxy: cfg.CaptureTapesProxy}
+}
+
 // unknownProviderEndpoints returns the [providers.<name>] keys that don't
 // name a registered provider, sorted for deterministic warnings.
 func unknownProviderEndpoints(endpoints map[string]string) []string {
@@ -172,6 +178,7 @@ func New(cfg config.Config, opts ...Option) *Agent {
 				Model:     cfg.ProviderModel,
 				APIBase:   cfg.ProviderAPI,
 				ExtraArgs: cfg.ProviderArgs,
+				Capture:   captureConfig(cfg),
 			})
 		default:
 			a.executor = worker.NewClaudeExecutor(worker.ClaudeConfig{Model: cfg.ProviderModel})
@@ -202,7 +209,7 @@ func New(cfg config.Config, opts ...Option) *Agent {
 			} else if p.Kind != provider.KindCLI {
 				fmt.Printf("Warning: advisor requires a CLI provider, got %q; advisor disabled\n", advName)
 			} else {
-				a.advisorExec = p.NewExec(provider.Config{Model: cfg.AdvisorModel, ExtraArgs: cfg.ProviderExtraArgs[advName]})
+				a.advisorExec = p.NewExec(provider.Config{Model: cfg.AdvisorModel, ExtraArgs: cfg.ProviderExtraArgs[advName], Capture: captureConfig(cfg)})
 				a.advisorProvider = advName
 				a.advisorModel = cfg.AdvisorModel
 			}
@@ -272,7 +279,7 @@ func New(cfg config.Config, opts ...Option) *Agent {
 					fmt.Printf("Warning: escalation rung %q: provider %q does not use api_base; value ignored\n", entry, rungProv)
 				}
 				rungs = append(rungs, LadderRung{
-					Exec:     p.NewExec(provider.Config{Model: rungModel, APIBase: apiBase, ExtraArgs: extraArgs}),
+					Exec:     p.NewExec(provider.Config{Model: rungModel, APIBase: apiBase, ExtraArgs: extraArgs, Capture: captureConfig(cfg)}),
 					Kind:     p.Kind,
 					Provider: rungProv,
 					Model:    rungModel,
