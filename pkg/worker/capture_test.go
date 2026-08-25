@@ -18,7 +18,7 @@ func fakeBin(t *testing.T, dir, name, script string) {
 }
 
 const echoArgs = "#!/bin/sh\necho \"$@\"\n"
-const echoEnv = "#!/bin/sh\necho \"base=$ANTHROPIC_BASE_URL key=$ANTHROPIC_API_KEY\"\n"
+const echoEnv = "#!/bin/sh\necho \"base=$ANTHROPIC_BASE_URL key=$ANTHROPIC_API_KEY tok=$ANTHROPIC_AUTH_TOKEN\"\n"
 
 func TestClaudeCaptureAutoPrefersPaperctl(t *testing.T) {
 	dir := t.TempDir()
@@ -70,6 +70,7 @@ func TestClaudeCaptureTapesSetsProxyKeepsKeyStripped(t *testing.T) {
 	fakeBin(t, dir, "claude", echoEnv)
 	t.Setenv("PATH", dir)
 	t.Setenv("ANTHROPIC_API_KEY", "sk-inherited")
+	t.Setenv("ANTHROPIC_AUTH_TOKEN", "tok-inherited")
 	t.Setenv("ANTHROPIC_BASE_URL", "http://paperd:51539")
 
 	task := Task{ID: 0, File: "test.go", Dir: t.TempDir(), Prompt: "fix it"}
@@ -78,8 +79,11 @@ func TestClaudeCaptureTapesSetsProxyKeepsKeyStripped(t *testing.T) {
 	if !strings.Contains(result.Output, "base=http://127.0.0.1:38967") {
 		t.Errorf("expected tapes proxy as base URL, got: %s", result.Output)
 	}
-	if !strings.Contains(result.Output, "key= ") && !strings.HasSuffix(strings.TrimSpace(result.Output), "key=") {
+	if strings.Contains(result.Output, "sk-inherited") {
 		t.Errorf("expected inherited API key stripped, got: %s", result.Output)
+	}
+	if strings.Contains(result.Output, "tok-inherited") {
+		t.Errorf("expected inherited auth token stripped, got: %s", result.Output)
 	}
 }
 
@@ -149,5 +153,22 @@ func TestValidCaptureMode(t *testing.T) {
 	}
 	if ValidCaptureMode("kafka") {
 		t.Error("expected unknown mode invalid")
+	}
+}
+
+func TestPiCapturePaperFallbackStripsEnv(t *testing.T) {
+	// paper mode with no paperctl on PATH: the defensive fallback must keep
+	// paper's contract and strip the inherited Anthropic auth env.
+	dir := t.TempDir()
+	fakeBin(t, dir, "pi", "#!/bin/sh\necho \"key=$ANTHROPIC_API_KEY tok=$ANTHROPIC_AUTH_TOKEN\"\n")
+	t.Setenv("PATH", dir)
+	t.Setenv("ANTHROPIC_API_KEY", "sk-inherited")
+	t.Setenv("ANTHROPIC_AUTH_TOKEN", "tok-inherited")
+
+	task := Task{ID: 0, File: "test.go", Dir: t.TempDir(), Prompt: "fix it"}
+	cfg := PiConfig{Capture: CaptureConfig{Mode: CaptureModePaper}}
+	result := NewPiExecutor(cfg)(context.Background(), task)
+	if strings.Contains(result.Output, "sk-inherited") || strings.Contains(result.Output, "tok-inherited") {
+		t.Errorf("expected paper-mode fallback to strip Anthropic env, got: %s", result.Output)
 	}
 }

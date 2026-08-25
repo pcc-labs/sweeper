@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"syscall"
@@ -115,14 +116,10 @@ Examples:
 				return err
 			}
 
-			// Validate capture mode; explicit paper capture needs the CLI.
+			// Validate capture mode syntax here; the semantic checks (VM,
+			// provider support, paperctl presence) run after --vm resolves.
 			if !worker.ValidCaptureMode(cfg.CaptureMode) {
 				return fmt.Errorf("invalid capture mode %q (valid: auto, paper, tapes, none)", cfg.CaptureMode)
-			}
-			if cfg.CaptureMode == worker.CaptureModePaper {
-				if _, ok := worker.PaperBinary(); !ok {
-					return fmt.Errorf("capture mode %q requires the paperctl CLI on PATH", cfg.CaptureMode)
-				}
 			}
 
 			piped := isPiped()
@@ -171,6 +168,37 @@ Examples:
 				}
 				if p.Kind != provider.KindCLI {
 					return fmt.Errorf("--vm is only compatible with CLI providers (got %q)", cfg.Provider)
+				}
+			}
+
+			// Fail fast when the worker's CLI binary is absent, instead of
+			// recording one exec failure per task. CLI providers exec the
+			// binary named after the provider (pi, claude, codex). Skipped
+			// under --vm (agents run inside the VM) and --dry-run (nothing
+			// dispatches).
+			if !useVM && !cfg.DryRun {
+				if p, err := provider.Get(cfg.Provider); err == nil && p.Kind == provider.KindCLI {
+					if _, lerr := exec.LookPath(p.Name); lerr != nil {
+						return fmt.Errorf("provider %q requires the %q CLI on PATH; install it or pick another with --provider (available: %v)", cfg.Provider, p.Name, provider.Available())
+					}
+				}
+			}
+
+			// An explicitly requested capture gateway must actually apply:
+			// reject combinations where it would be silently dropped, and
+			// only then require paperctl. Auto and none pass through — auto
+			// means "capture when the environment provides it".
+			if cfg.CaptureMode == worker.CaptureModePaper || cfg.CaptureMode == worker.CaptureModeTapes {
+				if useVM {
+					return fmt.Errorf("--capture %s is not supported with --vm: VM sub-agents run claude directly inside the VM and are not captured", cfg.CaptureMode)
+				}
+				if p, err := provider.Get(cfg.Provider); err == nil && !p.SupportsCapture {
+					return fmt.Errorf("provider %q does not support session capture (--capture %s); capture-aware providers: claude, pi", cfg.Provider, cfg.CaptureMode)
+				}
+				if cfg.CaptureMode == worker.CaptureModePaper {
+					if _, ok := worker.PaperBinary(); !ok {
+						return fmt.Errorf("capture mode %q requires the paperctl CLI on PATH", cfg.CaptureMode)
+					}
 				}
 			}
 

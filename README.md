@@ -184,6 +184,8 @@ Sub-agent sessions can be recorded by [paper](https://papercompute.com) or [tape
 - `tapes` — point sub-agent Anthropic traffic at the tapes proxy (`--capture-tapes-proxy` / `capture.tapes_proxy`, default `http://localhost:8080` — match the port `tapes start` prints). claude keeps its own login with only the base URL re-pointed; pi keeps its full environment with the base URL overridden.
 - `none` — run agents bare on their own login, no capture.
 
+Capture applies to the `claude` and `pi` providers. An explicit `--capture paper|tapes` with `codex` or `ollama` (which don't consume it) or with `--vm` (VM sub-agents run claude inside the VM, uncaptured) is rejected up front rather than silently dropped. Tapes mode with claude assumes claude's own login: the inherited `ANTHROPIC_API_KEY`/`ANTHROPIC_AUTH_TOKEN` stay stripped, so an API-key-only headless setup should use `--capture none` (or pi, which keeps its environment).
+
 ```bash
 sweeper run --capture tapes --capture-tapes-proxy http://127.0.0.1:38967
 sweeper run --capture paper --provider claude

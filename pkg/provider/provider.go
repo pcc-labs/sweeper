@@ -28,4 +28,8 @@ type Provider struct {
 	// CLI harnesses (claude, codex, pi) manage their own endpoints, so an
 	// api_base configured for them is ignored and worth a warning.
 	UsesAPIBase bool
+	// SupportsCapture reports whether the executor consumes Config.Capture.
+	// An explicit --capture paper/tapes on a provider without support is
+	// rejected up front rather than silently dropped.
+	SupportsCapture bool
 }

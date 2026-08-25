@@ -14,8 +14,9 @@ import (
 // absent, claude falls back to its own logged-in session. In tapes capture
 // mode the base URL is re-pointed at the tapes proxy after stripping.
 var anthropicEnvVars = map[string]bool{
-	"ANTHROPIC_API_KEY":  true,
-	"ANTHROPIC_BASE_URL": true,
+	"ANTHROPIC_API_KEY":    true,
+	"ANTHROPIC_AUTH_TOKEN": true, // bearer-token twin of API_KEY, used in proxy/gateway setups
+	"ANTHROPIC_BASE_URL":   true,
 }
 
 // childEnv returns the parent environment with the Anthropic auth/proxy

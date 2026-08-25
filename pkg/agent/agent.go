@@ -181,7 +181,11 @@ func New(cfg config.Config, opts ...Option) *Agent {
 				Capture:   captureConfig(cfg),
 			})
 		default:
-			a.executor = worker.NewClaudeExecutor(worker.ClaudeConfig{Model: cfg.ProviderModel})
+			a.executor = worker.NewClaudeExecutor(worker.ClaudeConfig{
+				Model:     cfg.ProviderModel,
+				ExtraArgs: cfg.ProviderArgs,
+				Capture:   captureConfig(cfg),
+			})
 		}
 	}
 
@@ -286,6 +290,16 @@ func New(cfg config.Config, opts ...Option) *Agent {
 				})
 			}
 			a.ladder = rungs
+			if len(rungs) > 0 {
+				// Bare entries resolve to the worker's provider, so a config
+				// written under a different default can reroute silently —
+				// print the resolution once so it is auditable.
+				parts := make([]string, len(rungs))
+				for i, r := range rungs {
+					parts[i] = r.Provider + "/" + r.Model
+				}
+				fmt.Printf("Escalation ladder: %s\n", strings.Join(parts, " -> "))
+			}
 		}
 	}
 

@@ -42,7 +42,12 @@ func NewPiExecutor(cfg PiConfig) Executor {
 				cmd = exec.CommandContext(ctx, paperPath, append([]string{"start", "pi", "--"}, args...)...)
 				cmd.Env = childEnv()
 			} else {
+				// Defensive: cmd/run.go rejects paper mode without the CLI
+				// up front. If reached anyway, keep paper mode's contract —
+				// the inherited Anthropic env must not authenticate the
+				// sub-agent.
 				cmd = exec.CommandContext(ctx, "pi", args...)
+				cmd.Env = childEnv()
 			}
 		case CaptureModeTapes:
 			cmd = exec.CommandContext(ctx, "pi", args...)

@@ -4,8 +4,9 @@ import "github.com/papercomputeco/sweeper/pkg/worker"
 
 func init() {
 	Register(Provider{
-		Name: "claude",
-		Kind: KindCLI,
+		Name:            "claude",
+		Kind:            KindCLI,
+		SupportsCapture: true,
 		NewExec: func(cfg Config) worker.Executor {
 			return worker.NewClaudeExecutor(worker.ClaudeConfig{
 				Model:     cfg.Model,

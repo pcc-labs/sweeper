@@ -21,7 +21,7 @@ const (
 // picks a different port — set capture.tapes_proxy to match it.
 const DefaultTapesProxy = "http://localhost:8080"
 
-// CaptureMode reports whether s names a valid capture mode ("" = auto).
+// ValidCaptureMode reports whether s names a valid capture mode ("" = auto).
 func ValidCaptureMode(s string) bool {
 	switch s {
 	case "", CaptureModeAuto, CaptureModePaper, CaptureModeTapes, CaptureModeNone:
