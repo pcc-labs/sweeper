@@ -12,16 +12,18 @@ type Config struct {
 	LinterName        string
 	MaxRounds         int
 	StaleThreshold    int
-	VM                bool              // --vm: boot ephemeral stereOS VM
-	VMName            string            // --vm-name: use existing VM (no managed lifecycle)
-	VMJcard           string            // --vm-jcard: custom jcard.toml path
-	Provider          string            // AI provider name (e.g. "claude", "codex", "ollama")
-	ProviderModel     string            // model override for the provider
-	ProviderAPI       string            // API base URL for API-only providers
-	AdvisorProvider   string            // provider for the sweep-planning advisor ("" = disabled)
-	AdvisorModel      string            // model for the sweep-planning advisor
-	EscalationLadder  []string          // worker escalation rungs above the base model ("" entries invalid)
-	ProviderEndpoints map[string]string // per-provider api_base from [providers.<name>], for rungs off the worker's provider
+	VM                bool                // --vm: boot ephemeral stereOS VM
+	VMName            string              // --vm-name: use existing VM (no managed lifecycle)
+	VMJcard           string              // --vm-jcard: custom jcard.toml path
+	Provider          string              // AI provider name (e.g. "claude", "codex", "ollama")
+	ProviderModel     string              // model override for the provider
+	ProviderAPI       string              // API base URL for API-only providers
+	AdvisorProvider   string              // provider for the sweep-planning advisor ("" = disabled)
+	AdvisorModel      string              // model for the sweep-planning advisor
+	EscalationLadder  []string            // worker escalation rungs above the base model ("" entries invalid)
+	ProviderEndpoints map[string]string   // per-provider api_base from [providers.<name>], for rungs off the worker's provider
+	ProviderArgs      []string            // extra CLI args for the worker's executor, from worker/provider extra_args
+	ProviderExtraArgs map[string][]string // per-provider extra_args from [providers.<name>], for rungs/advisor off the worker's provider
 }
 
 // MaxConcurrency is the hard ceiling for parallel sub-agents regardless of
@@ -37,7 +39,7 @@ func Default() Config {
 		DryRun:         false,
 		MaxRounds:      1,
 		StaleThreshold: 2,
-		Provider:       "claude",
+		Provider:       "pi",
 	}
 }
 
@@ -62,8 +64,10 @@ func FromTOML(tc TOMLConfig) Config {
 	}
 	name := firstNonEmpty(tc.Worker.Name, tc.Provider.Name)
 	endpoints := make(map[string]string, len(tc.Providers))
+	extraArgs := make(map[string][]string, len(tc.Providers))
 	for prov, ep := range tc.Providers {
 		endpoints[prov] = ep.APIBase
+		extraArgs[prov] = ep.ExtraArgs
 	}
 	return Config{
 		TargetDir:         ".",
@@ -83,7 +87,20 @@ func FromTOML(tc TOMLConfig) Config {
 		AdvisorModel:      tc.Advisor.Model,
 		EscalationLadder:  tc.Worker.Escalation.Ladder,
 		ProviderEndpoints: endpoints,
+		ProviderArgs:      firstNonEmptySlice(tc.Worker.ExtraArgs, tc.Provider.ExtraArgs, extraArgs[name]),
+		ProviderExtraArgs: extraArgs,
 	}
+}
+
+// firstNonEmptySlice is firstNonEmpty for string slices: the [worker]
+// extra_args win over [provider], then the [providers.<name>] fallback.
+func firstNonEmptySlice(vals ...[]string) []string {
+	for _, v := range vals {
+		if len(v) > 0 {
+			return v
+		}
+	}
+	return nil
 }
 
 // firstNonEmpty returns the first non-empty string, used to merge the

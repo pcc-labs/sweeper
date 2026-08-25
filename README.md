@@ -2,7 +2,7 @@
 
 Multi-threaded code maintenance with resource isolated subagents and swappable AI providers.
 
-Sweeper dispatches parallel AI agents to fix lint issues across your codebase, each running in its own isolated environment. Providers are swappable: use Claude Code (default), OpenAI Codex, or local models via Ollama. It groups issues by file, fans out concurrent fixes, escalates strategy when fixes stall, and records outcomes so it learns what works. With VM isolation enabled, each sub-agent runs inside a dedicated stereOS virtual machine with its own CPU, memory, and secrets boundary, safe to scale to 10+ concurrent agents.
+Sweeper dispatches parallel AI agents to fix lint issues across your codebase, each running in its own isolated environment. Providers are swappable: use the [pi coding agent](https://github.com/badlogic/pi-mono) (default — one driver, any model in pi's registry), Claude Code, OpenAI Codex, or local models via Ollama. It groups issues by file, fans out concurrent fixes, escalates strategy when fixes stall, and records outcomes so it learns what works. With VM isolation enabled, each sub-agent runs inside a dedicated stereOS virtual machine with its own CPU, memory, and secrets boundary, safe to scale to 10+ concurrent agents.
 
 ```
                         sweeper run --vm -c 5
@@ -96,7 +96,8 @@ The core binary. All integrations below (except Pi) require this.
 
 ```bash
 go install github.com/papercomputeco/sweeper@latest
-sweeper run                              # default: golangci-lint with claude
+sweeper run                              # default: golangci-lint with pi
+sweeper run --provider claude            # use Claude Code CLI instead
 sweeper run --provider codex             # use OpenAI Codex CLI instead
 sweeper run --provider ollama --model qwen2.5-coder:7b  # local model via Ollama
 sweeper run --advisor-model claude-opus-4-8 --provider ollama --model qwen2.5-coder:7b  # frontier model plans, local model fixes
@@ -149,7 +150,7 @@ cp skills/sweeper/SKILL.md /path/to/your-project/.opencode/agents/sweeper.md
 
 ### Pi
 
-[Pi](https://github.com/anthropics/pi) is a Claude-native IDE extension. Its sweeper integration reimplements the linting and telemetry loop in TypeScript using Pi's own tool system, so it does **not** need the Go binary.
+[Pi](https://github.com/badlogic/pi-mono) is a coding agent with its own extension and model system. This integration is the *inverse* of the `pi` provider below: instead of sweeper driving pi, pi hosts sweeper — the linting and telemetry loop is reimplemented in TypeScript using Pi's own tool system, so it does **not** need the Go binary.
 
 ```bash
 pi install sweeper
@@ -163,19 +164,22 @@ Sweeper supports swappable AI providers. Well-scoped tasks like lint fixes can r
 
 | Provider | Kind | Requires | Example |
 |----------|------|----------|---------|
-| `claude` (default) | CLI | `claude` CLI installed | `sweeper run` |
+| `pi` (default) | CLI | `pi` CLI installed | `sweeper run --model qwen38-27b` |
+| `claude` | CLI | `claude` CLI installed | `sweeper run --provider claude` |
 | `codex` | CLI | `codex` CLI installed | `sweeper run --provider codex` |
 | `ollama` | API | Ollama running locally | `sweeper run --provider ollama --model qwen2.5-coder:7b` |
 
-**CLI providers** (claude, codex) have built-in file tools. Sweeper sends a prompt and the harness reads/writes files directly.
+**CLI providers** (pi, claude, codex) have built-in file tools. Sweeper sends a prompt and the harness reads/writes files directly.
+
+The `pi` provider is the flexibility play: pi resolves `--model` through its own registry (`~/.pi/agent/models.json`), so one sweeper provider reaches cloud models, local Ollama variants, and anything else registered there — including a semantic router endpoint like `vllm-sr/auto` — with no sweeper-side endpoint config. Provider credentials are pi's concern; sweeper passes the environment through unchanged. Per-run pi flags (extensions, guardrails) go in `extra_args`.
 
 **API providers** (ollama) are text-in, text-out. Sweeper includes file content in the prompt and applies the returned unified diff via `patch`.
 
 ### Provider flags
 
-- `--provider <name>` — AI provider to use (default: `claude`)
-- `--model <name>` — Model override for the provider (e.g. `qwen2.5-coder:7b` for ollama)
-- `--api-base <url>` — API base URL for API providers (default: `http://localhost:11434` for ollama)
+- `--provider <name>` — AI provider to use (default: `pi`)
+- `--model <name>` — Model override for the provider (a pi-registered model, or e.g. `qwen2.5-coder:7b` for ollama)
+- `--api-base <url>` — API base URL for API providers (default: `http://localhost:11434` for ollama); CLI providers manage their own endpoints and warn if this is set
 
 VM isolation (`--vm`) is only compatible with CLI providers, and currently always invokes claude inside the VM (the worker `--model`, escalation rungs, and advisor model are honored).
 

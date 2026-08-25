@@ -159,12 +159,19 @@ func New(cfg config.Config, opts ...Option) *Agent {
 		switch {
 		case cfg.VM && a.vmExecFactory != nil:
 			// VM executors always run the claude CLI inside the VM.
+			if provName != "claude" {
+				fmt.Printf("Warning: provider %q runs as claude inside the VM (VM workers are claude-only)\n", provName)
+			}
 			a.executor = a.vmExecFactory(cfg.ProviderModel)
 			a.providerKind = provider.KindCLI
 		case perr == nil:
+			if cfg.ProviderAPI != "" && !p.UsesAPIBase {
+				fmt.Printf("Warning: provider %q does not use api_base (its CLI manages its own endpoints); value ignored\n", provName)
+			}
 			a.executor = p.NewExec(provider.Config{
-				Model:   cfg.ProviderModel,
-				APIBase: cfg.ProviderAPI,
+				Model:     cfg.ProviderModel,
+				APIBase:   cfg.ProviderAPI,
+				ExtraArgs: cfg.ProviderArgs,
 			})
 		default:
 			a.executor = worker.NewClaudeExecutor(worker.ClaudeConfig{Model: cfg.ProviderModel})
@@ -195,7 +202,7 @@ func New(cfg config.Config, opts ...Option) *Agent {
 			} else if p.Kind != provider.KindCLI {
 				fmt.Printf("Warning: advisor requires a CLI provider, got %q; advisor disabled\n", advName)
 			} else {
-				a.advisorExec = p.NewExec(provider.Config{Model: cfg.AdvisorModel})
+				a.advisorExec = p.NewExec(provider.Config{Model: cfg.AdvisorModel, ExtraArgs: cfg.ProviderExtraArgs[advName]})
 				a.advisorProvider = advName
 				a.advisorModel = cfg.AdvisorModel
 			}
@@ -245,18 +252,27 @@ func New(cfg config.Config, opts ...Option) *Agent {
 					rungs = nil
 					break
 				}
-				// A rung on the worker's own provider inherits its api_base;
-				// otherwise (or when unset) [providers.<name>] supplies the
-				// endpoint, falling back to the provider default when absent.
+				// A rung on the worker's own provider inherits its api_base
+				// and extra_args; otherwise (or when unset) [providers.<name>]
+				// supplies them, falling back to the provider default when
+				// absent.
 				apiBase := ""
+				var extraArgs []string
 				if rungProv == provName {
 					apiBase = cfg.ProviderAPI
+					extraArgs = cfg.ProviderArgs
 				}
 				if apiBase == "" {
 					apiBase = cfg.ProviderEndpoints[rungProv]
 				}
+				if len(extraArgs) == 0 {
+					extraArgs = cfg.ProviderExtraArgs[rungProv]
+				}
+				if apiBase != "" && !p.UsesAPIBase {
+					fmt.Printf("Warning: escalation rung %q: provider %q does not use api_base; value ignored\n", entry, rungProv)
+				}
 				rungs = append(rungs, LadderRung{
-					Exec:     p.NewExec(provider.Config{Model: rungModel, APIBase: apiBase}),
+					Exec:     p.NewExec(provider.Config{Model: rungModel, APIBase: apiBase, ExtraArgs: extraArgs}),
 					Kind:     p.Kind,
 					Provider: rungProv,
 					Model:    rungModel,

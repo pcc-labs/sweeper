@@ -23,4 +23,8 @@ type Provider struct {
 	Name    string
 	Kind    Kind
 	NewExec func(Config) worker.Executor
+	// UsesAPIBase reports whether the executor consumes Config.APIBase.
+	// CLI harnesses (claude, codex, pi) manage their own endpoints, so an
+	// api_base configured for them is ignored and worth a warning.
+	UsesAPIBase bool
 }

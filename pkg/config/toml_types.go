@@ -19,7 +19,8 @@ type TOMLConfig struct {
 // that provider without a more specific api_base — notably escalation-ladder
 // rungs on a provider other than the worker's.
 type ProviderEndpoint struct {
-	APIBase string `toml:"api_base"`
+	APIBase   string   `toml:"api_base"`
+	ExtraArgs []string `toml:"extra_args"`
 }
 
 type RunConfig struct {
@@ -38,9 +39,10 @@ func (r RunConfig) ParseRateLimit() (time.Duration, error) {
 }
 
 type ProviderConfig struct {
-	Name    string `toml:"name"`
-	Model   string `toml:"model"`
-	APIBase string `toml:"api_base"`
+	Name      string   `toml:"name"`
+	Model     string   `toml:"model"`
+	APIBase   string   `toml:"api_base"`
+	ExtraArgs []string `toml:"extra_args"`
 }
 
 // WorkerConfig configures the fix-executing worker role. It mirrors
@@ -50,6 +52,7 @@ type WorkerConfig struct {
 	Name       string           `toml:"name"`
 	Model      string           `toml:"model"`
 	APIBase    string           `toml:"api_base"`
+	ExtraArgs  []string         `toml:"extra_args"`
 	Escalation EscalationConfig `toml:"escalation"`
 }
 
@@ -99,7 +102,7 @@ func NewDefaultTOMLConfig() TOMLConfig {
 			StaleThreshold: 2,
 		},
 		Provider: ProviderConfig{
-			Name: "claude",
+			Name: "pi",
 		},
 		Telemetry: TelemetryConfig{
 			Backend: "jsonl",
@@ -118,12 +121,14 @@ var TOMLConfigKeySet = map[string]bool{
 	"provider.name":            true,
 	"provider.model":           true,
 	"provider.api_base":        true,
+	"provider.extra_args":      true,
 	"provider.allowed_tools":   true,
 	"advisor.name":             true,
 	"advisor.model":            true,
 	"worker.name":              true,
 	"worker.model":             true,
 	"worker.api_base":          true,
+	"worker.extra_args":        true,
 	"worker.escalation.ladder": true,
 	// [providers.<name>] keys are dynamic (keyed by provider name) and
 	// cannot be enumerated here; the section's leaf key is api_base.

@@ -16,8 +16,8 @@ func TestNewDefaultTOMLConfig(t *testing.T) {
 	if tc.Run.RateLimit != "2s" {
 		t.Errorf("expected rate_limit 2s, got %s", tc.Run.RateLimit)
 	}
-	if tc.Provider.Name != "claude" {
-		t.Errorf("expected provider claude, got %s", tc.Provider.Name)
+	if tc.Provider.Name != "pi" {
+		t.Errorf("expected provider pi, got %s", tc.Provider.Name)
 	}
 	if tc.Telemetry.Backend != "jsonl" {
 		t.Errorf("expected telemetry backend jsonl, got %s", tc.Telemetry.Backend)

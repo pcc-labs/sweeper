@@ -24,7 +24,7 @@ func fakeCLI(t *testing.T, name string) {
 // Regression test for #20: --model was silently dropped by the claude and
 // codex providers because NewExec ignored provider.Config.
 func TestCLIProvidersForwardModel(t *testing.T) {
-	for _, name := range []string{"claude", "codex"} {
+	for _, name := range []string{"claude", "codex", "pi"} {
 		t.Run(name, func(t *testing.T) {
 			fakeCLI(t, name)
 
