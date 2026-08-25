@@ -1,6 +1,6 @@
 # Sweeper Agent Skill
 
-You are operating the **sweeper** tool, an AI-powered code maintenance runner that dispatches parallel Claude Code sub-agents to fix lint issues, write or repair tests, improve documentation, and refactor code. It works on anything you can express as `file:line: message` output from any command.
+You are operating the **sweeper** tool, an AI-powered code maintenance runner that dispatches parallel coding-agent sub-agents (pi by default; Claude Code, Codex, and Ollama are swappable in) to fix lint issues, write or repair tests, improve documentation, and refactor code. It works on anything you can express as `file:line: message` output from any command.
 
 ## Quick Start
 
@@ -21,7 +21,7 @@ Runs the full lint-fix-retry loop:
 2. Parses output using multi-format detection (golangci-lint, generic `file:line:col`, minimal `file:line`, or raw fallback)
 3. Groups structured issues by file into parallel fix tasks
 4. Selects prompt strategy based on round number and file history (standard → retry → exploration)
-5. Dispatches parallel Claude Code sub-agents (default: 3) to fix each file
+5. Dispatches parallel coding-agent sub-agents (default: 3, pi provider by default) to fix each file
 6. Records outcomes to `.sweeper/telemetry/` with round and strategy metadata
 7. Re-lints to check remaining issues; repeats with escalated prompts (if `--max-rounds > 1`)
 
@@ -101,7 +101,7 @@ Prints the current version.
 
 Before running sweeper, ensure these are available:
 
-1. **claude** - Claude Code CLI must be in PATH. The tool invokes `claude --print --dangerously-skip-permissions <prompt>` for each fix task.
+1. **pi** - The pi coding agent CLI must be in PATH for the default provider. The tool invokes `pi -p [--model <m>] <prompt>` for each fix task; models resolve through pi's registry (`~/.pi/agent/models.json`). With `--provider claude`, the Claude Code CLI is required instead (invoked as `claude --print --dangerously-skip-permissions <prompt>`).
 2. **golangci-lint** (only for default mode) - Must be in PATH. Install: `go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest`
 3. **paper** (optional) - When the `paper` CLI is installed (`paper init` to bring up the daemon), sweeper launches each claude sub-agent via `paper start claude`, so paper's gateway manages auth and captures the session (no `ANTHROPIC_API_KEY` used). Sweeper detects the `paper` CLI and warns if it's missing.
 4. **mb** (optional, for `--vm` mode) - Masterblaster CLI for stereOS VMs. Required only when using `--vm` flag.
@@ -223,7 +223,7 @@ Use `sweeper observe` to analyze this data. It shows success rates per linter an
 ## Troubleshooting
 
 - **"golangci-lint: command not found"** - Install golangci-lint or use `-- <command>` to specify a different linter
-- **"claude: command not found"** - Install Claude Code CLI or add it to PATH
+- **"pi: command not found"** / **"claude: command not found"** - Install the provider's CLI or add it to PATH (or switch providers with `--provider`)
 - **"cannot use both piped input and -- command"** - Choose one input method: pipe or `--`
 - **"No lint issues found"** - The target codebase is clean; nothing to fix
 - **Custom command produces no parseable output** - Sweeper falls back to raw mode; the agent will analyze the full output
