@@ -18,13 +18,19 @@ stale_threshold = 2
 # dry_run = false
 
 [provider]
-name = "claude"
-# model = ""
-# api_base = ""
+name = "pi"
+# model = ""            # a model registered with pi (~/.pi/agent/models.json)
+# api_base = ""         # API providers (ollama) only; CLI providers manage their own endpoints
+# extra_args = []       # extra CLI args before the prompt, e.g. ["-e", "guardrails.ts"]
 # allowed_tools = ["Read", "Write", "Edit", "Glob", "Grep"]
-# When the paper CLI is installed, sweeper launches claude sub-agents via
-# `paper start claude` so paper's gateway manages auth and captures the session
-# (no ANTHROPIC_API_KEY is used). No configuration is needed.
+# pi resolves models through its own registry (~/.pi/agent/models.json), so
+# any model registered there — cloud providers, local Ollama variants, or a
+# semantic router like vllm-sr/auto — is reachable by name with no endpoint
+# config on the sweeper side. Provider credentials come from pi's environment.
+# With name = "claude": under the default capture mode (auto), sweeper
+# launches claude sub-agents via `paperctl start claude` when the paperctl
+# CLI is installed, so paper's gateway manages auth and captures the session
+# (no ANTHROPIC_API_KEY is used). See [capture] to swap gateways.
 
 # [worker]
 # Alias for [provider] — the fix-executing role. Non-empty worker fields win
@@ -41,16 +47,24 @@ name = "claude"
 # A rung on the worker's own provider inherits api_base above; a rung on a
 # different provider takes its endpoint from [providers.<name>] below, or the
 # provider default when no section exists.
+# NOTE: bare entries run on the WORKER's provider — with pi now the default,
+# a bare "claude-sonnet-5" would run as `pi --model claude-sonnet-5`. Prefix
+# cross-provider rungs explicitly ("claude/claude-sonnet-5"); the resolved
+# ladder is printed at startup.
 # With [vm] enabled, rungs run `claude --model <rung>` inside the VM, so
 # every entry must resolve to the claude provider.
-# ladder = ["claude/claude-haiku-4-5", "claude/claude-sonnet-5"]
+# ladder = ["pi/qwen38-27b", "claude/claude-haiku-4-5", "claude/claude-sonnet-5"]
 
 # [providers.<name>]
-# Per-provider endpoints, keyed by registered provider name. Used by
-# escalation rungs running on that provider (and by the worker itself when
-# worker.api_base is unset).
+# Per-provider endpoints and CLI args, keyed by registered provider name.
+# Used by escalation rungs (and the advisor's extra_args) running on that
+# provider, and by the worker itself when worker.api_base / extra_args are
+# unset. api_base only applies to API providers (ollama); CLI providers
+# (pi, claude, codex) manage their own endpoints and warn if it is set.
 # [providers.ollama]
 # api_base = "http://gpu-box:11434"
+# [providers.pi]
+# extra_args = ["--no-extensions"]
 
 # [advisor]
 # Optional sweep-planning phase: a frontier model plans each round (task
@@ -60,6 +74,20 @@ name = "claude"
 # With [vm] enabled, the advisor runs inside the VM and must use claude.
 # name = "claude"
 # model = "claude-opus-4-8"
+
+# [capture]
+# Session-capture gateway for sub-agent runs; swap between paper and tapes
+# as needed.
+#   auto  (default) wrap CLI agents with paperctl when installed (legacy
+#         `paper` binary also detected); pi runs bare (it owns its providers)
+#   paper require paperctl; wraps `paperctl start claude|pi -- ...`
+#   tapes point sub-agent Anthropic traffic at the tapes proxy
+#         (`tapes start` must be running; claude keeps its own login)
+#   none  run agents bare on their own login, no capture
+# Capture applies to claude and pi; explicit paper/tapes with codex/ollama
+# or with [vm] enabled is rejected rather than silently dropped.
+# mode = "auto"
+# tapes_proxy = "http://localhost:8080"   # match `tapes start`'s proxy port
 
 [telemetry]
 # backend: "jsonl" (default, always active) or "confluent" (adds Kafka fan-out)

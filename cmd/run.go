@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"syscall"
@@ -30,6 +31,8 @@ func newRunCmd() *cobra.Command {
 	var providerName string
 	var providerModel string
 	var providerAPI string
+	var captureMode string
+	var captureTapesProxy string
 	var advisorProvider string
 	var advisorModel string
 	cmd := &cobra.Command{
@@ -82,6 +85,12 @@ Examples:
 				tc.Provider.APIBase = providerAPI
 				tc.Worker.APIBase = providerAPI
 			}
+			if cmd.Flags().Changed("capture") {
+				tc.Capture.Mode = captureMode
+			}
+			if cmd.Flags().Changed("capture-tapes-proxy") {
+				tc.Capture.TapesProxy = captureTapesProxy
+			}
 			if cmd.Flags().Changed("advisor-provider") {
 				tc.Advisor.Name = advisorProvider
 			}
@@ -105,6 +114,12 @@ Examples:
 			// Validate provider exists before proceeding.
 			if _, err := provider.Get(cfg.Provider); err != nil {
 				return err
+			}
+
+			// Validate capture mode syntax here; the semantic checks (VM,
+			// provider support, paperctl presence) run after --vm resolves.
+			if !worker.ValidCaptureMode(cfg.CaptureMode) {
+				return fmt.Errorf("invalid capture mode %q (valid: auto, paper, tapes, none)", cfg.CaptureMode)
 			}
 
 			piped := isPiped()
@@ -156,6 +171,37 @@ Examples:
 				}
 			}
 
+			// Fail fast when the worker's CLI binary is absent, instead of
+			// recording one exec failure per task. CLI providers exec the
+			// binary named after the provider (pi, claude, codex). Skipped
+			// under --vm (agents run inside the VM) and --dry-run (nothing
+			// dispatches).
+			if !useVM && !cfg.DryRun {
+				if p, err := provider.Get(cfg.Provider); err == nil && p.Kind == provider.KindCLI {
+					if _, lerr := exec.LookPath(p.Name); lerr != nil {
+						return fmt.Errorf("provider %q requires the %q CLI on PATH; install it or pick another with --provider (available: %v)", cfg.Provider, p.Name, provider.Available())
+					}
+				}
+			}
+
+			// An explicitly requested capture gateway must actually apply:
+			// reject combinations where it would be silently dropped, and
+			// only then require paperctl. Auto and none pass through — auto
+			// means "capture when the environment provides it".
+			if cfg.CaptureMode == worker.CaptureModePaper || cfg.CaptureMode == worker.CaptureModeTapes {
+				if useVM {
+					return fmt.Errorf("--capture %s is not supported with --vm: VM sub-agents run claude directly inside the VM and are not captured", cfg.CaptureMode)
+				}
+				if p, err := provider.Get(cfg.Provider); err == nil && !p.SupportsCapture {
+					return fmt.Errorf("provider %q does not support session capture (--capture %s); capture-aware providers: claude, pi", cfg.Provider, cfg.CaptureMode)
+				}
+				if cfg.CaptureMode == worker.CaptureModePaper {
+					if _, ok := worker.PaperBinary(); !ok {
+						return fmt.Errorf("capture mode %q requires the paperctl CLI on PATH", cfg.CaptureMode)
+					}
+				}
+			}
+
 			if useVM {
 				absTarget, _ := filepath.Abs(cfg.TargetDir)
 				var vmHandle *vm.VM
@@ -201,11 +247,13 @@ Examples:
 	cmd.Flags().BoolVar(&useVM, "vm", false, "boot ephemeral stereOS VM, teardown on exit")
 	cmd.Flags().StringVar(&vmName, "vm-name", "", "use existing VM by name (no managed lifecycle, implies --vm)")
 	cmd.Flags().StringVar(&vmJcard, "vm-jcard", "", "custom jcard.toml path (implies --vm)")
-	cmd.Flags().StringVar(&providerName, "provider", "claude", "AI provider (claude, codex, ollama)")
-	cmd.Flags().StringVar(&providerModel, "model", "", "model name for the provider (e.g. qwen2.5-coder:7b)")
+	cmd.Flags().StringVar(&providerName, "provider", "pi", "AI provider (pi, claude, codex, ollama)")
+	cmd.Flags().StringVar(&providerModel, "model", "", "model name for the provider (e.g. a model registered with pi, or qwen2.5-coder:7b for ollama)")
 	cmd.Flags().StringVar(&providerAPI, "api-base", "", "API base URL for API providers (e.g. http://localhost:11434)")
 	cmd.Flags().StringVar(&advisorProvider, "advisor-provider", "", "provider for the sweep-planning advisor (claude, codex; enables the advisor phase)")
 	cmd.Flags().StringVar(&advisorModel, "advisor-model", "", "model for the sweep-planning advisor (e.g. claude-opus-4-8)")
+	cmd.Flags().StringVar(&captureMode, "capture", "auto", "session-capture gateway: auto (paperctl when installed), paper, tapes, none")
+	cmd.Flags().StringVar(&captureTapesProxy, "capture-tapes-proxy", "", "tapes proxy URL for --capture tapes (default http://localhost:8080)")
 	return cmd
 }
 

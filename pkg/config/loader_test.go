@@ -61,8 +61,8 @@ func TestLoadMissingFileUsesDefaults(t *testing.T) {
 	if tc.Run.Concurrency != 2 {
 		t.Errorf("expected default concurrency 2, got %d", tc.Run.Concurrency)
 	}
-	if tc.Provider.Name != "claude" {
-		t.Errorf("expected default provider claude, got %s", tc.Provider.Name)
+	if tc.Provider.Name != "pi" {
+		t.Errorf("expected default provider pi, got %s", tc.Provider.Name)
 	}
 }
 

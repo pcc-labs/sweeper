@@ -12,6 +12,16 @@ type TOMLConfig struct {
 	Providers map[string]ProviderEndpoint `toml:"providers"`
 	Telemetry TelemetryConfig             `toml:"telemetry"`
 	VM        VMSectionConfig             `toml:"vm"`
+	Capture   CaptureSectionConfig        `toml:"capture"`
+}
+
+// CaptureSectionConfig selects the session-capture gateway for sub-agents:
+// "auto" (default) wraps CLI agents with paperctl when installed, "paper"
+// requires it, "tapes" points sub-agent traffic at the tapes proxy, "none"
+// runs agents bare on their own login.
+type CaptureSectionConfig struct {
+	Mode       string `toml:"mode"`
+	TapesProxy string `toml:"tapes_proxy"`
 }
 
 // ProviderEndpoint holds per-provider connection settings, keyed by provider
@@ -19,7 +29,8 @@ type TOMLConfig struct {
 // that provider without a more specific api_base — notably escalation-ladder
 // rungs on a provider other than the worker's.
 type ProviderEndpoint struct {
-	APIBase string `toml:"api_base"`
+	APIBase   string   `toml:"api_base"`
+	ExtraArgs []string `toml:"extra_args"`
 }
 
 type RunConfig struct {
@@ -38,9 +49,10 @@ func (r RunConfig) ParseRateLimit() (time.Duration, error) {
 }
 
 type ProviderConfig struct {
-	Name    string `toml:"name"`
-	Model   string `toml:"model"`
-	APIBase string `toml:"api_base"`
+	Name      string   `toml:"name"`
+	Model     string   `toml:"model"`
+	APIBase   string   `toml:"api_base"`
+	ExtraArgs []string `toml:"extra_args"`
 }
 
 // WorkerConfig configures the fix-executing worker role. It mirrors
@@ -50,6 +62,7 @@ type WorkerConfig struct {
 	Name       string           `toml:"name"`
 	Model      string           `toml:"model"`
 	APIBase    string           `toml:"api_base"`
+	ExtraArgs  []string         `toml:"extra_args"`
 	Escalation EscalationConfig `toml:"escalation"`
 }
 
@@ -99,7 +112,7 @@ func NewDefaultTOMLConfig() TOMLConfig {
 			StaleThreshold: 2,
 		},
 		Provider: ProviderConfig{
-			Name: "claude",
+			Name: "pi",
 		},
 		Telemetry: TelemetryConfig{
 			Backend: "jsonl",
@@ -118,12 +131,14 @@ var TOMLConfigKeySet = map[string]bool{
 	"provider.name":            true,
 	"provider.model":           true,
 	"provider.api_base":        true,
+	"provider.extra_args":      true,
 	"provider.allowed_tools":   true,
 	"advisor.name":             true,
 	"advisor.model":            true,
 	"worker.name":              true,
 	"worker.model":             true,
 	"worker.api_base":          true,
+	"worker.extra_args":        true,
 	"worker.escalation.ladder": true,
 	// [providers.<name>] keys are dynamic (keyed by provider name) and
 	// cannot be enumerated here; the section's leaf key is api_base.
@@ -138,4 +153,6 @@ var TOMLConfigKeySet = map[string]bool{
 	"vm.enabled":                          true,
 	"vm.name":                             true,
 	"vm.jcard":                            true,
+	"capture.mode":                        true,
+	"capture.tapes_proxy":                 true,
 }

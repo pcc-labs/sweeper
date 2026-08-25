@@ -115,6 +115,12 @@ func defaultLinterFunc(ctx context.Context, dir string) (linter.ParseResult, err
 	return linter.Run(ctx, dir)
 }
 
+// captureConfig maps the runtime config's capture fields into the worker's
+// CaptureConfig, shared by the base worker, advisor, and ladder rungs.
+func captureConfig(cfg config.Config) worker.CaptureConfig {
+	return worker.CaptureConfig{Mode: cfg.CaptureMode, TapesProxy: cfg.CaptureTapesProxy}
+}
+
 // unknownProviderEndpoints returns the [providers.<name>] keys that don't
 // name a registered provider, sorted for deterministic warnings.
 func unknownProviderEndpoints(endpoints map[string]string) []string {
@@ -159,15 +165,27 @@ func New(cfg config.Config, opts ...Option) *Agent {
 		switch {
 		case cfg.VM && a.vmExecFactory != nil:
 			// VM executors always run the claude CLI inside the VM.
+			if provName != "claude" {
+				fmt.Printf("Warning: provider %q runs as claude inside the VM (VM workers are claude-only)\n", provName)
+			}
 			a.executor = a.vmExecFactory(cfg.ProviderModel)
 			a.providerKind = provider.KindCLI
 		case perr == nil:
+			if cfg.ProviderAPI != "" && !p.UsesAPIBase {
+				fmt.Printf("Warning: provider %q does not use api_base (its CLI manages its own endpoints); value ignored\n", provName)
+			}
 			a.executor = p.NewExec(provider.Config{
-				Model:   cfg.ProviderModel,
-				APIBase: cfg.ProviderAPI,
+				Model:     cfg.ProviderModel,
+				APIBase:   cfg.ProviderAPI,
+				ExtraArgs: cfg.ProviderArgs,
+				Capture:   captureConfig(cfg),
 			})
 		default:
-			a.executor = worker.NewClaudeExecutor(worker.ClaudeConfig{Model: cfg.ProviderModel})
+			a.executor = worker.NewClaudeExecutor(worker.ClaudeConfig{
+				Model:     cfg.ProviderModel,
+				ExtraArgs: cfg.ProviderArgs,
+				Capture:   captureConfig(cfg),
+			})
 		}
 	}
 
@@ -195,7 +213,7 @@ func New(cfg config.Config, opts ...Option) *Agent {
 			} else if p.Kind != provider.KindCLI {
 				fmt.Printf("Warning: advisor requires a CLI provider, got %q; advisor disabled\n", advName)
 			} else {
-				a.advisorExec = p.NewExec(provider.Config{Model: cfg.AdvisorModel})
+				a.advisorExec = p.NewExec(provider.Config{Model: cfg.AdvisorModel, ExtraArgs: cfg.ProviderExtraArgs[advName], Capture: captureConfig(cfg)})
 				a.advisorProvider = advName
 				a.advisorModel = cfg.AdvisorModel
 			}
@@ -245,24 +263,43 @@ func New(cfg config.Config, opts ...Option) *Agent {
 					rungs = nil
 					break
 				}
-				// A rung on the worker's own provider inherits its api_base;
-				// otherwise (or when unset) [providers.<name>] supplies the
-				// endpoint, falling back to the provider default when absent.
+				// A rung on the worker's own provider inherits its api_base
+				// and extra_args; otherwise (or when unset) [providers.<name>]
+				// supplies them, falling back to the provider default when
+				// absent.
 				apiBase := ""
+				var extraArgs []string
 				if rungProv == provName {
 					apiBase = cfg.ProviderAPI
+					extraArgs = cfg.ProviderArgs
 				}
 				if apiBase == "" {
 					apiBase = cfg.ProviderEndpoints[rungProv]
 				}
+				if len(extraArgs) == 0 {
+					extraArgs = cfg.ProviderExtraArgs[rungProv]
+				}
+				if apiBase != "" && !p.UsesAPIBase {
+					fmt.Printf("Warning: escalation rung %q: provider %q does not use api_base; value ignored\n", entry, rungProv)
+				}
 				rungs = append(rungs, LadderRung{
-					Exec:     p.NewExec(provider.Config{Model: rungModel, APIBase: apiBase}),
+					Exec:     p.NewExec(provider.Config{Model: rungModel, APIBase: apiBase, ExtraArgs: extraArgs, Capture: captureConfig(cfg)}),
 					Kind:     p.Kind,
 					Provider: rungProv,
 					Model:    rungModel,
 				})
 			}
 			a.ladder = rungs
+			if len(rungs) > 0 {
+				// Bare entries resolve to the worker's provider, so a config
+				// written under a different default can reroute silently —
+				// print the resolution once so it is auditable.
+				parts := make([]string, len(rungs))
+				for i, r := range rungs {
+					parts[i] = r.Provider + "/" + r.Model
+				}
+				fmt.Printf("Escalation ladder: %s\n", strings.Join(parts, " -> "))
+			}
 		}
 	}
 

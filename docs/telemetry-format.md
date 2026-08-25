@@ -80,7 +80,7 @@ these per linter alongside fix outcomes — no external data source is required.
 ## Session Capture (Paper)
 
 Full session transcripts are captured by the external **paper** gateway. When the `paper` CLI
-is installed, sweeper launches each `claude` sub-agent via `paper start claude`, so paper
+is installed, sweeper launches each `claude` sub-agent via `paperctl start claude`, so paper
 manages authentication and captures the session — sweeper passes no `ANTHROPIC_API_KEY` and
 strips the Anthropic auth/proxy vars from the sub-agent's environment. Sweeper neither reads
 nor writes the paper/tapes API. If paper is absent, sweeper runs `claude` directly under its

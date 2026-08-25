@@ -1,6 +1,6 @@
 # Sweeper Skill
 
-Autonomous lint-fix agent skill powered by the sweeper CLI. Orchestrates parallel sub-agents with swappable AI providers (Claude, Codex, Ollama), VM isolation, and telemetry-driven learning.
+Autonomous lint-fix agent skill powered by the sweeper CLI. Orchestrates parallel sub-agents with swappable AI providers (Pi, Claude, Codex, Ollama), VM isolation, and telemetry-driven learning.
 
 ## Install in Claude Code
 
@@ -44,16 +44,16 @@ For session capture through paper (optional):
 paper init
 ```
 
-This brings up the paper daemon. Sweeper then launches each claude sub-agent via `paper start claude`, so paper's gateway manages auth and captures the session (no API token is passed). Sweeper requires no configuration for this; if the `paper` CLI isn't installed it falls back to running claude directly (no capture).
+This brings up the paper daemon. Sweeper then launches each claude sub-agent via `paperctl start claude`, so paper's gateway manages auth and captures the session (no API token is passed). Sweeper requires no configuration for this; if the `paper` CLI isn't installed it falls back to running claude directly (no capture).
 
 ## What It Does
 
-1. Orchestrates `sweeper run` to dispatch parallel AI sub-agents (Claude, Codex, or Ollama)
+1. Orchestrates `sweeper run` to dispatch parallel AI sub-agents (Pi, Claude, Codex, or Ollama)
 2. Each sub-agent fixes a file's lint issues concurrently (bounded by `--concurrency`)
 3. Retries with escalating strategies (standard -> retry -> exploration)
-4. Swappable providers: `--provider claude` (default), `--provider codex`, `--provider ollama --model <name>`
+4. Swappable providers: `--provider pi` (default), `--provider claude`, `--provider codex`, `--provider ollama --model <name>`
 5. Optional VM isolation via stereOS for security and resource isolation (CLI providers only)
-6. Paper (when installed) captures every sub-agent session — sweeper launches claude via `paper start claude`
+6. Paper (when installed) captures every sub-agent session — sweeper launches claude via `paperctl start claude` (swap gateways with `--capture paper|tapes|none`)
 7. `sweeper observe` shows success rates, strategy effectiveness, and token spend
 8. Session state tracked in `sweeper.md` for resume across restarts
 

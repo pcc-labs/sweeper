@@ -5,7 +5,7 @@ description: Agent-powered code maintenance with parallel sub-agents, VM isolati
 
 # Sweeper - Agent-Powered Code Maintenance
 
-You orchestrate the **sweeper** CLI to run parallel AI sub-agents against a codebase with optional VM isolation and swappable providers (Claude, Codex, Ollama/local models). While lint fixing is the default, the same loop handles test repairs, dependency migrations, refactoring, and any task where you can run a command, parse issues, and dispatch agents to fix them. Sweeper's JSONL telemetry records every fix attempt (outcome, strategy, round, tokens), enabling you to learn from past runs and optimize token spend. When the paper CLI is installed, sweeper launches claude sub-agents via `paper start claude`, so paper's gateway manages auth and captures each session — no sweeper configuration required.
+You orchestrate the **sweeper** CLI to run parallel AI sub-agents against a codebase with optional VM isolation and swappable providers (Pi, Claude, Codex, Ollama/local models). While lint fixing is the default, the same loop handles test repairs, dependency migrations, refactoring, and any task where you can run a command, parse issues, and dispatch agents to fix them. Sweeper's JSONL telemetry records every fix attempt (outcome, strategy, round, tokens), enabling you to learn from past runs and optimize token spend. When the paper CLI is installed, sweeper launches claude sub-agents via `paperctl start claude`, so paper's gateway manages auth and captures each session — no sweeper configuration required.
 
 ## Prerequisites
 
@@ -58,12 +58,12 @@ Commit on a new branch: `sweeper/<goal>-<date>`
 
 ## Running Sweeper
 
-Use the CLI to orchestrate the full loop. The CLI handles linting, parsing, parallel sub-agent dispatch, retry escalation, and telemetry. Session capture is handled by paper when its CLI is installed (sweeper launches claude via `paper start claude`).
+Use the CLI to orchestrate the full loop. The CLI handles linting, parsing, parallel sub-agent dispatch, retry escalation, and telemetry. Session capture is handled by paper when its CLI is installed (sweeper launches claude via `paperctl start claude` (swap gateways with `--capture paper|tapes|none`)).
 
 ### Basic runs
 
 ```bash
-# Default: golangci-lint with claude (default provider)
+# Default: golangci-lint with pi (default provider; models resolve via ~/.pi/agent/models.json)
 sweeper run
 
 # Custom linter
@@ -82,7 +82,10 @@ sweeper run --dry-run
 ### Alternative providers
 
 ```bash
-# Use OpenAI Codex CLI instead of Claude
+# Use Claude Code CLI instead of pi
+sweeper run --provider claude
+
+# Use OpenAI Codex CLI
 sweeper run --provider codex -- npm run lint
 
 # Use a local Ollama model (no API key needed)
@@ -92,7 +95,7 @@ sweeper run --provider ollama --model qwen2.5-coder:7b
 sweeper run --provider ollama --model codellama --api-base http://gpu-server:11434
 ```
 
-Available providers: `claude` (default, CLI), `codex` (CLI), `ollama` (API). CLI providers have built-in file tools. API providers include file content in the prompt and apply returned diffs. VM isolation (`--vm`) only works with CLI providers and always invokes claude inside the VM; worker/rung/advisor models are passed via `--model`.
+Available providers: `pi` (default, CLI — resolves models through pi's own registry, so local and cloud models are reachable by name), `claude` (CLI), `codex` (CLI), `ollama` (API). CLI providers have built-in file tools. API providers include file content in the prompt and apply returned diffs. VM isolation (`--vm`) only works with CLI providers and always invokes claude inside the VM; worker/rung/advisor models are passed via `--model`.
 
 ### VM isolation (recommended for production)
 

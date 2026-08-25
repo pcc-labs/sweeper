@@ -62,3 +62,57 @@ func TestFromTOMLWorkerAPIBaseBeatsProvidersSection(t *testing.T) {
 		t.Errorf("expected worker.api_base to win over [providers.ollama], got %q", cfg.ProviderAPI)
 	}
 }
+
+func TestDecodeExtraArgs(t *testing.T) {
+	src := `
+[worker]
+name = "pi"
+extra_args = ["--no-extensions"]
+
+[providers.pi]
+extra_args = ["-e", "guardrails.ts"]
+`
+	tc := NewDefaultTOMLConfig()
+	if _, err := toml.Decode(src, &tc); err != nil {
+		t.Fatal(err)
+	}
+	if got := tc.Worker.ExtraArgs; len(got) != 1 || got[0] != "--no-extensions" {
+		t.Errorf("expected worker.extra_args decoded, got %v", got)
+	}
+	if got := tc.Providers["pi"].ExtraArgs; len(got) != 2 || got[0] != "-e" {
+		t.Errorf("expected providers.pi.extra_args decoded, got %v", got)
+	}
+}
+
+func TestFromTOMLExtraArgsMerge(t *testing.T) {
+	// worker.extra_args wins over provider.extra_args and the
+	// [providers.<name>] fallback.
+	tc := NewDefaultTOMLConfig()
+	tc.Worker.Name = "pi"
+	tc.Worker.ExtraArgs = []string{"--worker-arg"}
+	tc.Provider.ExtraArgs = []string{"--provider-arg"}
+	tc.Providers = map[string]ProviderEndpoint{
+		"pi": {ExtraArgs: []string{"--endpoint-arg"}},
+	}
+	cfg := FromTOML(tc)
+	if len(cfg.ProviderArgs) != 1 || cfg.ProviderArgs[0] != "--worker-arg" {
+		t.Errorf("expected worker.extra_args to win, got %v", cfg.ProviderArgs)
+	}
+	if got := cfg.ProviderExtraArgs["pi"]; len(got) != 1 || got[0] != "--endpoint-arg" {
+		t.Errorf("expected ProviderExtraArgs mapped from [providers], got %v", got)
+	}
+}
+
+func TestFromTOMLExtraArgsFallsBackToProvidersSection(t *testing.T) {
+	// No worker/provider extra_args set: the worker's own args come from
+	// [providers.<worker.name>].
+	tc := NewDefaultTOMLConfig()
+	tc.Worker.Name = "pi"
+	tc.Providers = map[string]ProviderEndpoint{
+		"pi": {ExtraArgs: []string{"-e", "guardrails.ts"}},
+	}
+	cfg := FromTOML(tc)
+	if len(cfg.ProviderArgs) != 2 || cfg.ProviderArgs[0] != "-e" {
+		t.Errorf("expected worker extra_args to fall back to [providers.pi], got %v", cfg.ProviderArgs)
+	}
+}

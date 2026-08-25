@@ -4,11 +4,11 @@ import "github.com/papercomputeco/sweeper/pkg/worker"
 
 func init() {
 	Register(Provider{
-		Name:            "claude",
+		Name:            "pi",
 		Kind:            KindCLI,
 		SupportsCapture: true,
 		NewExec: func(cfg Config) worker.Executor {
-			return worker.NewClaudeExecutor(worker.ClaudeConfig{
+			return worker.NewPiExecutor(worker.PiConfig{
 				Model:     cfg.Model,
 				ExtraArgs: cfg.ExtraArgs,
 				Capture:   cfg.Capture,

@@ -84,4 +84,10 @@ func applyEnvOverrides(tc *TOMLConfig) {
 	if v := os.Getenv("SWEEPER_TELEMETRY_CONFLUENT_API_SECRET_ENV"); v != "" {
 		tc.Telemetry.Confluent.APISecretEnv = v
 	}
+	if v := os.Getenv("SWEEPER_CAPTURE_MODE"); v != "" {
+		tc.Capture.Mode = v
+	}
+	if v := os.Getenv("SWEEPER_CAPTURE_TAPES_PROXY"); v != "" {
+		tc.Capture.TapesProxy = v
+	}
 }
