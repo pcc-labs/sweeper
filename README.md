@@ -332,6 +332,31 @@ With `--vm`, each sub-agent gets:
 sweeper run --vm -c 5 --max-rounds 3    # 5 isolated agents, 3 retry rounds
 ```
 
+### Mixtape
+
+The generated jcard boots the stereOS `coder` mixtape, selected by host
+architecture — `coder-arm64:latest` on arm64, `coder-x86:latest` on amd64.
+Those are the names the registry publishes; check with `mb mixtapes list`.
+`mb up` pulls on first use, so the initial run costs a multi-GB download.
+
+The `coder` mixtape ships `claude`, `codex`, `gemini` and `opencode` on the
+agent's restricted PATH; `pi` lands with [stereOS #38](https://github.com/papercomputeco/stereOS/pull/38).
+Sweeper only dispatches `claude` inside the VM today (see below), so the rest
+are along for the ride.
+
+### Why VM workers are claude-only
+
+`--vm` always invokes `claude --print` inside the guest, regardless of
+`--provider`. The worker `--model`, escalation rungs, and advisor model are all
+honored, but every rung must resolve to claude — a cross-provider rung like
+`ollama/...` disables the ladder with a warning.
+
+This is a sweeper-side limit, not a mixtape one: the VM executor hardcodes the
+claude invocation. Once the `coder` mixtape carries `pi` — sweeper's default
+provider outside VMs — lifting it is mostly a matter of teaching the VM executor
+to build the right command per provider. Until then, `--vm` and `--provider pi`
+don't compose.
+
 ## Responsible Use
 
 Sweeper dispatches automated Claude sub-agents. To stay within [Anthropic's usage policy](https://www.anthropic.com/legal/aup):

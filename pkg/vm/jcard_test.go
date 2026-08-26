@@ -1,8 +1,10 @@
 package vm
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -106,5 +108,40 @@ func TestGenerateJcardWriteError(t *testing.T) {
 	_, err := GenerateJcard(dir, "test-vm", "/tmp/proj")
 	if err == nil {
 		t.Error("expected error when WriteFile fails")
+	}
+}
+
+func TestMixtapeForArch(t *testing.T) {
+	tests := []struct {
+		goarch string
+		want   string
+	}{
+		{"arm64", "coder-arm64:latest"},
+		{"amd64", "coder-x86:latest"},
+	}
+	for _, tt := range tests {
+		if got := mixtapeFor(tt.goarch); got != tt.want {
+			t.Errorf("mixtapeFor(%q) = %q, want %q", tt.goarch, got, tt.want)
+		}
+	}
+}
+
+func TestGenerateJcardEmbedsArchMixtape(t *testing.T) {
+	dir := t.TempDir()
+	path, err := GenerateJcard(dir, "sweeper-test", "/tmp/project")
+	if err != nil {
+		t.Fatalf("GenerateJcard: %v", err)
+	}
+	content, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("reading jcard: %v", err)
+	}
+	want := fmt.Sprintf("mixtape = %q", mixtapeFor(runtime.GOARCH))
+	if !strings.Contains(string(content), want) {
+		t.Errorf("jcard missing %s\ngot:\n%s", want, content)
+	}
+	// The retired name must not come back: the registry no longer serves it.
+	if strings.Contains(string(content), "opencode-mixtape") {
+		t.Error("jcard still references the retired opencode-mixtape")
 	}
 }
