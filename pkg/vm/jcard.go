@@ -4,9 +4,22 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 )
 
-const jcardTemplate = `mixtape = "opencode-mixtape:latest"
+// mixtapeFor returns the stereOS mixtape published for the host architecture.
+// The registry splits the coder mixtape by arch (`mb mixtapes list`), so there
+// is no single portable name. The previous hardcoded "opencode-mixtape:latest"
+// is no longer served by the registry — it only resolved on machines that had
+// already pulled it, so --vm worked locally and failed everywhere else.
+func mixtapeFor(goarch string) string {
+	if goarch == "amd64" {
+		return "coder-x86:latest"
+	}
+	return "coder-arm64:latest"
+}
+
+const jcardTemplate = `mixtape = "%s"
 name = "%s"
 
 [resources]
@@ -31,7 +44,7 @@ func GenerateJcard(dir, name, hostProjectDir string) (string, error) {
 	}
 	apiKey := os.Getenv("ANTHROPIC_API_KEY")
 	path := filepath.Join(dir, "jcard.toml")
-	content := fmt.Sprintf(jcardTemplate, name, hostProjectDir, apiKey)
+	content := fmt.Sprintf(jcardTemplate, mixtapeFor(runtime.GOARCH), name, hostProjectDir, apiKey)
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		return "", fmt.Errorf("writing jcard: %w", err)
 	}
