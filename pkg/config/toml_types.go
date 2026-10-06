@@ -100,6 +100,11 @@ type VMSectionConfig struct {
 	Enabled bool   `toml:"enabled"`
 	Name    string `toml:"name"`
 	Jcard   string `toml:"jcard"`
+	// Backend picks the VM implementation: "stereos" (default, via mb) or
+	// "smol" (smolvm microVMs).
+	Backend string `toml:"backend"`
+	// Image is the OCI image the smol backend boots.
+	Image string `toml:"image"`
 }
 
 func NewDefaultTOMLConfig() TOMLConfig {
@@ -153,6 +158,8 @@ var TOMLConfigKeySet = map[string]bool{
 	"vm.enabled":                          true,
 	"vm.name":                             true,
 	"vm.jcard":                            true,
+	"vm.backend":                          true,
+	"vm.image":                            true,
 	"capture.mode":                        true,
 	"capture.tapes_proxy":                 true,
 }

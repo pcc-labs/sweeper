@@ -317,14 +317,14 @@ npx skills add papercomputeco/skills
 
 ## VM Isolation
 
-Sub-agents can run inside ephemeral [stereOS](https://stereos.ai) virtual machines, managed by the `mb` (Masterblaster) CLI. This is what makes high concurrency safe.
+Sub-agents can run inside ephemeral virtual machines: [stereOS](https://stereos.ai) VMs managed by the `mb` (Masterblaster) CLI by default, or [smolvm](https://github.com/smol-machines/smolvm) microVMs with `--vm-backend smol`. This is what makes high concurrency safe.
 
 Without VMs, sub-agents share the host process, filesystem, and API keys. At low concurrency (2-3) this works fine. At higher concurrency, you want each agent isolated so a runaway process or leaked credential stays contained.
 
 With `--vm`, each sub-agent gets:
 
 - **Own CPU and memory**: 4 cores, 8GB RAM per VM (configurable). No resource contention between agents.
-- **Secret boundary**: `ANTHROPIC_API_KEY` is injected into the VM and never touches the host filesystem.
+- **Secret boundary**: on stereOS, `ANTHROPIC_API_KEY` is injected into the VM and never touches the host filesystem. On smolvm, the key never enters the VM at all.
 - **Nesting safety**: `claude --print` fails inside active Claude Code sessions due to nesting detection. VMs sidestep this entirely.
 - **Clean teardown**: VMs are ephemeral. On exit (success, failure, or SIGINT), the VM is destroyed automatically.
 
@@ -343,6 +343,32 @@ The `coder` mixtape ships `claude`, `codex`, `gemini` and `opencode` on the
 agent's restricted PATH; `pi` lands with [stereOS #38](https://github.com/papercomputeco/stereOS/pull/38).
 Sweeper only dispatches `claude` inside the VM today (see below), so the rest
 are along for the ride.
+
+### Backends: stereOS or smolvm
+
+`--vm` boots stereOS by default. `--vm-backend smol` boots a
+[smolvm](https://github.com/smol-machines/smolvm) microVM instead. Either flag
+implies `--vm`, and `[vm] backend = "smol"` sets it in config.
+
+```bash
+sweeper run --vm-backend smol -c 5 -- npm run lint          # smolvm, default image
+sweeper run --vm-backend smol --vm-image ghcr.io/acme/agent:1 -- npm run lint
+sweeper run --vm-backend smol --vm-name my-smol -- npm run lint   # attach, no teardown
+```
+
+| | stereOS (`stereos`) | smolvm (`smol`) |
+|---|---|---|
+| Host CLI | `mb` | `smolvm` |
+| Guest | `coder` mixtape, claude preinstalled | any OCI image; claude installed on start if missing |
+| API key | written into the VM's jcard | never enters the VM; the guest gets a placeholder and smolvm substitutes the real key on HTTPS to api.anthropic.com |
+| Workspace | target dir shared at `/workspace` | target dir mounted at `/workspace` |
+| Custom config | `--vm-jcard` | `--vm-image` |
+
+The smol backend needs `ANTHROPIC_API_KEY` set on the host. The default image
+is `node:22-bookworm-slim`, which runs `npm install -g @anthropic-ai/claude-code`
+on each boot, about 15 seconds. Pass `--vm-image` with claude baked in to skip
+that. The guest runs as root with `IS_SANDBOX=1`, which `claude
+--dangerously-skip-permissions` requires as root.
 
 ### Why VM workers are claude-only
 
