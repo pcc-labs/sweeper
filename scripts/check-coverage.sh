@@ -25,11 +25,13 @@ EXCLUDED_FILES="claude.go|codex.go"
 # Functions excluded from 100% check.
 # These contain defensive SQL rows.Scan/db.Ping error paths that are
 # impossible to trigger with SQLite's permissive type coercion driver,
-# or shell out to external binaries (mb CLI for stereOS VMs).
+# or shell out to external binaries (mb for stereOS, smolvm for smol VMs).
 EXCLUDED_FUNCTIONS=(
   "pkg/vm/vm.go:.*defaultRunner"
   "pkg/vm/vm.go:.*Boot"
   "pkg/vm/vm.go:.*Attach"
+  "pkg/vm/smol.go:.*BootSmol"
+  "pkg/vm/backend.go:[0-9]+:[[:space:]]+New[[:space:]]"
   "pkg/worker/ollama.go:.*NewOllamaExecutor"
   "pkg/worker/ollama.go:.*ollamaChat"
   "pkg/worker/ollama.go:.*applyDiff"

@@ -104,5 +104,7 @@ dir = ".sweeper/telemetry"
 
 # [vm]
 # enabled = false
-# name = ""
-# jcard = ""
+# backend = "stereos"   # "stereos" (mb, default) or "smol" (smolvm microVMs)
+# name = ""             # attach to an existing VM on the chosen backend
+# jcard = ""            # stereos only: custom jcard.toml
+# image = ""            # smol only: OCI image (default node:22-bookworm-slim)

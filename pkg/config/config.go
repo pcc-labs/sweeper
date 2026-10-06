@@ -12,9 +12,11 @@ type Config struct {
 	LinterName        string
 	MaxRounds         int
 	StaleThreshold    int
-	VM                bool                // --vm: boot ephemeral stereOS VM
+	VM                bool                // --vm: boot an ephemeral VM (backend per VMBackend)
 	VMName            string              // --vm-name: use existing VM (no managed lifecycle)
 	VMJcard           string              // --vm-jcard: custom jcard.toml path
+	VMBackend         string              // --vm-backend: stereos (default) or smol
+	VMImage           string              // --vm-image: OCI image for the smol backend
 	Provider          string              // AI provider name (e.g. "claude", "codex", "ollama")
 	ProviderModel     string              // model override for the provider
 	ProviderAPI       string              // API base URL for API-only providers
@@ -82,6 +84,8 @@ func FromTOML(tc TOMLConfig) Config {
 		VM:                tc.VM.Enabled,
 		VMName:            tc.VM.Name,
 		VMJcard:           tc.VM.Jcard,
+		VMBackend:         tc.VM.Backend,
+		VMImage:           tc.VM.Image,
 		Provider:          name,
 		ProviderModel:     firstNonEmpty(tc.Worker.Model, tc.Provider.Model),
 		ProviderAPI:       firstNonEmpty(tc.Worker.APIBase, tc.Provider.APIBase, endpoints[name]),
