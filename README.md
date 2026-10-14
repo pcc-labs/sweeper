@@ -378,20 +378,23 @@ The two local backends share the target dir with the guest, so the host sees
 every edit as it happens. A Daytona sandbox runs remotely and shares nothing,
 so the backend moves the tree itself:
 
-1. **Upload.** The files `git ls-files` reports (tracked plus untracked, minus
-   ignored) are tarred and uploaded; `.git`, `node_modules` and build output
-   stay home. The sandbox commits that tree as its baseline.
+1. **Upload.** The target must be a git checkout. The files `git ls-files`
+   reports (tracked plus untracked, minus ignored) are streamed up as a
+   tarball; `.git`, `node_modules` and build output stay home. The sandbox
+   commits that tree as its baseline.
 2. **Init.** claude is installed if the snapshot lacks it, then `--vm-init`
    runs in the workspace. Use it for the target's own toolchain (`npm ci`,
    `go mod download`), or bake a snapshot with `daytona snapshot create` and
    pass it as `--vm-image` to skip the install on every run.
-3. **Sync back.** After each task the sandbox's diff for that file is applied
-   on the host with `git apply`, then committed in the sandbox so the next
-   round's patch carries only new work. A patch the host cannot apply fails
-   the task instead of being dropped, and the sandbox tree is cleared on
+3. **Sync back.** After each task, every change in the sandbox tree is
+   applied on the host with `git apply` (prefixed correctly when the target is
+   a subdirectory of a larger repo), then committed in the sandbox so the next
+   patch carries only new work. The sync is whole-tree because an agent fixing
+   one file routinely touches its callers too. A patch the host cannot apply
+   fails the task instead of being dropped, and the sandbox tree is cleared on
    reuse so an attached sandbox never leaks files between sweeps.
 4. **Teardown.** The sandbox is deleted on exit. It is also created ephemeral
-   with a one-hour idle stop and a four-hour TTL, so a host that dies before
+   with a one-hour idle stop and a twelve-hour TTL, so a host that dies before
    teardown does not leave a billed sandbox behind.
 
 Sandboxes have no Claude login, so `ANTHROPIC_API_KEY` must be set on the host.
@@ -401,8 +404,8 @@ exchange lands in a store that outlives the sandbox, which is the point of
 running the sweep there in the first place.
 
 Daytona's own CLI is not needed; the backend talks to the API through the Go
-SDK. `--vm-name` attaches to an existing sandbox by ID or name, re-uploads the
-tree, and leaves the sandbox running on exit.
+SDK. `--vm-name` attaches to an existing sandbox by ID or name, starts it if it
+was auto-stopped, re-uploads the tree, and leaves it running on exit.
 
 ### Why VM workers are claude-only
 

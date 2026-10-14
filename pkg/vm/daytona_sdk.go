@@ -52,6 +52,8 @@ type sdkSandbox struct{ sb *daytona.Sandbox }
 
 func (s *sdkSandbox) ID() string { return s.sb.ID }
 
+func (s *sdkSandbox) Start(ctx context.Context) error { return s.sb.Start(ctx) }
+
 // Exec disables the server-side execution limit: a claude run can outlast
 // any fixed timeout, and the caller's ctx already bounds the wait.
 func (s *sdkSandbox) Exec(ctx context.Context, command, cwd string) (int, string, error) {

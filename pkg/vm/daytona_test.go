@@ -25,6 +25,8 @@ type fakeSandbox struct {
 	respond   func(command string) (int, string, error)
 	uploadOK  bool
 	deleteErr error
+	started   bool
+	startErr  error
 }
 
 type fakeExec struct{ command, cwd string }
@@ -34,6 +36,10 @@ func newFakeSandbox(id string) *fakeSandbox {
 }
 
 func (f *fakeSandbox) ID() string { return f.id }
+func (f *fakeSandbox) Start(ctx context.Context) error {
+	f.started = true
+	return f.startErr
+}
 func (f *fakeSandbox) Exec(ctx context.Context, command, cwd string) (int, string, error) {
 	f.execs = append(f.execs, fakeExec{command, cwd})
 	if f.respond != nil {
@@ -228,6 +234,9 @@ func TestAttachDaytonaReusesSandbox(t *testing.T) {
 	if v.Managed || v.Name != "warm-1" || len(client.created) != 0 || len(client.got) != 1 {
 		t.Errorf("attach should look up, not create: managed=%v name=%q created=%d got=%v", v.Managed, v.Name, len(client.created), client.got)
 	}
+	if !sb.started {
+		t.Error("attach should start the sandbox in case it was auto-stopped")
+	}
 	if _, ok := sb.uploads[daytonaArchive]; !ok {
 		t.Error("attach should still upload the target dir")
 	}
@@ -244,8 +253,8 @@ func TestDaytonaExecQuotesArgsAndReportsExit(t *testing.T) {
 	sb.respond = func(command string) (int, string, error) { return 2, "lint failed", nil }
 	v := &DaytonaSandbox{Name: "sb", Dir: "/h", sb: sb, host: emptyHost}
 	out, err := v.Exec(context.Background(), "claude", "--print", "fix it's \"here\"\nnow")
-	if err == nil || !strings.Contains(err.Error(), "exit status 2") {
-		t.Fatalf("expected exit status error, got %v", err)
+	if err == nil || err.Error() != "exit status 2" {
+		t.Fatalf("expected a bare exit status error like the other backends, got %v", err)
 	}
 	if string(out) != "lint failed" {
 		t.Errorf("output should be returned alongside the error, got %q", out)
@@ -270,17 +279,21 @@ func TestDaytonaSyncBackAppliesAndCommits(t *testing.T) {
 	if err := v.SyncBack(context.Background(), "src/a.go"); err != nil {
 		t.Fatal(err)
 	}
-	if len(calls) != 1 || calls[0].dir != "/host/proj" || strings.Join(calls[0].args, " ") != "git apply --whitespace=nowarn" || string(calls[0].stdin) != patch {
-		t.Errorf("expected the diff piped into git apply in the target dir, got %+v", calls)
+	if len(calls) != 2 || strings.Join(calls[0].args, " ") != "git rev-parse --show-prefix" {
+		t.Fatalf("expected a prefix lookup then apply, got %+v", calls)
+	}
+	apply := calls[1]
+	if apply.dir != "/host/proj" || strings.Join(apply.args, " ") != "git apply --whitespace=nowarn" || string(apply.stdin) != patch {
+		t.Errorf("expected the diff piped into git apply in the target dir, got %+v", apply)
 	}
 	if len(sb.execs) != 2 {
 		t.Fatalf("expected collect then commit, got %v", sb.execs)
 	}
-	if !strings.Contains(sb.execs[0].command, "git add -A -- src/a.go && git diff --cached --binary -- src/a.go") {
-		t.Errorf("collect command = %q", sb.execs[0].command)
+	if sb.execs[0].command != "git add -A -f && git diff --cached --binary" {
+		t.Errorf("collect should stage and diff the whole tree, got %q", sb.execs[0].command)
 	}
-	if !strings.HasPrefix(sb.execs[1].command, daytonaGit+" commit") || !strings.HasSuffix(sb.execs[1].command, "-- src/a.go") {
-		t.Errorf("commit should be scoped to the synced file, got %q", sb.execs[1].command)
+	if sb.execs[1].command != daytonaGit+" commit -q -m 'sweeper: after src/a.go'" {
+		t.Errorf("commit should record the staged index with no pathspec, got %q", sb.execs[1].command)
 	}
 }
 
@@ -312,22 +325,6 @@ func TestDaytonaSyncBackHostApplyFailure(t *testing.T) {
 	}
 	if len(sb.execs) != 1 {
 		t.Error("a change the host rejected must not be committed in the sandbox")
-	}
-}
-
-func TestDaytonaSyncBackPathspec(t *testing.T) {
-	v := &DaytonaSandbox{Dir: "/host/proj"}
-	cases := map[string]string{"": ".", "src/a.go": "src/a.go", "/host/proj/src/b.go": "src/b.go", "./c.go": "c.go"}
-	for in, want := range cases {
-		got, err := v.pathspec(in)
-		if err != nil || got != want {
-			t.Errorf("pathspec(%q) = %q, %v; want %q", in, got, err, want)
-		}
-	}
-	for _, in := range []string{"../etc/passwd", "/host/other/x"} {
-		if _, err := v.pathspec(in); err == nil {
-			t.Errorf("pathspec(%q) should be rejected", in)
-		}
 	}
 }
 
@@ -371,16 +368,13 @@ func TestPackWorkspaceFollowsGitListing(t *testing.T) {
 	// deleted.go is tracked but gone from disk; node_modules is not listed.
 	listing := strings.Join([]string{"src/a.go", "README.md", "link.md", "deleted.go", "src/a.go"}, "\x00") + "\x00"
 	var calls []hostCall
-	r, err := packWorkspace(context.Background(), dir, recordingHost(&calls, listing, nil))
+	r := packWorkspace(context.Background(), dir, recordingHost(&calls, listing, nil))
+	gz, err := gzip.NewReader(r)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if strings.Join(calls[0].args, " ") != "git ls-files -z --cached --others --exclude-standard" || calls[0].dir != dir {
 		t.Errorf("expected git ls-files in the target dir, got %+v", calls[0])
-	}
-	gz, err := gzip.NewReader(r)
-	if err != nil {
-		t.Fatal(err)
 	}
 	tr := tar.NewReader(gz)
 	got := map[string]string{}
@@ -435,12 +429,13 @@ func TestBootDaytonaFailsWhenPackingFails(t *testing.T) {
 	failingLs := func(ctx context.Context, dir string, stdin []byte, name string, args ...string) ([]byte, error) {
 		return []byte("fatal: not a git repository"), fmt.Errorf("exit 128")
 	}
-	_, err := bootDaytona("n", "/h", "", "", &fakeClient{sb: sb}, failingLs)
-	if err == nil || !strings.Contains(err.Error(), "not a git repository") {
-		t.Fatalf("expected the git error, got %v", err)
+	client := &fakeClient{sb: sb}
+	_, err := bootDaytona("n", "/h", "", "", client, failingLs)
+	if err == nil || !strings.Contains(err.Error(), "git checkout") || !strings.Contains(err.Error(), "not a git repository") {
+		t.Fatalf("expected a git checkout error carrying git's output, got %v", err)
 	}
-	if !sb.deleted {
-		t.Error("sandbox should be deleted when the workspace cannot be packed")
+	if len(client.created) != 0 {
+		t.Error("an unpackable target must be rejected before a sandbox is created and billed")
 	}
 }
 
@@ -474,6 +469,11 @@ func TestAttachDaytonaErrors(t *testing.T) {
 	if _, err := attachDaytona("gone", "/h", "", &fakeClient{sb: newFakeSandbox(""), getErr: fmt.Errorf("404")}, emptyHost); err == nil || !strings.Contains(err.Error(), "gone") {
 		t.Errorf("expected a lookup error naming the sandbox, got %v", err)
 	}
+	stopped := newFakeSandbox("")
+	stopped.startErr = fmt.Errorf("runner unavailable")
+	if _, err := attachDaytona("cold", "/h", "", &fakeClient{sb: stopped}, emptyHost); err == nil || !strings.Contains(err.Error(), "starting") {
+		t.Errorf("expected a start error, got %v", err)
+	}
 	sb := newFakeSandbox("")
 	sb.uploadOK = false
 	if _, err := attachDaytona("warm", "/h", "", &fakeClient{sb: sb}, emptyHost); err == nil {
@@ -495,15 +495,10 @@ func TestDaytonaExecTransportError(t *testing.T) {
 }
 
 func TestDaytonaSyncBackErrors(t *testing.T) {
-	// Path outside the target dir.
-	v := &DaytonaSandbox{Dir: "/host/proj", sb: newFakeSandbox("sb"), host: emptyHost}
-	if err := v.SyncBack(context.Background(), "../escape.go"); err == nil {
-		t.Error("expected a pathspec error")
-	}
 	// Collecting the diff fails.
 	sb := newFakeSandbox("sb")
 	sb.respond = func(command string) (int, string, error) { return 128, "fatal: bad index", nil }
-	v = &DaytonaSandbox{Dir: "/h", sb: sb, host: emptyHost}
+	v := &DaytonaSandbox{Dir: "/h", sb: sb, host: emptyHost}
 	if err := v.SyncBack(context.Background(), "a.go"); err == nil || !strings.Contains(err.Error(), "collecting") {
 		t.Errorf("expected a collect error, got %v", err)
 	}
@@ -524,13 +519,40 @@ func TestDaytonaSyncBackErrors(t *testing.T) {
 	}
 }
 
-func TestDaytonaRelativeDirPaths(t *testing.T) {
-	// A relative Dir cannot be related to an absolute path; both helpers
-	// fall back rather than guess.
-	v := &DaytonaSandbox{Dir: "rel/proj"}
-	if _, err := v.pathspec("/abs/x.go"); err == nil {
-		t.Error("pathspec should fail when Rel fails")
+func TestDaytonaSyncBackPrefixesSubdirectoryOfRepo(t *testing.T) {
+	sb := newFakeSandbox("sb")
+	sb.respond = func(command string) (int, string, error) {
+		if strings.Contains(command, "git diff --cached") {
+			return 0, "diff --git a/src/a.ts b/src/a.ts\n", nil
+		}
+		return 0, "", nil
 	}
+	var applies []hostCall
+	host := func(ctx context.Context, dir string, stdin []byte, name string, args ...string) ([]byte, error) {
+		switch args[0] {
+		case "rev-parse":
+			return []byte("packages/web/\n"), nil
+		case "apply":
+			applies = append(applies, hostCall{dir, stdin, append([]string{name}, args...)})
+		}
+		return nil, nil
+	}
+	v := &DaytonaSandbox{Dir: "/repo/packages/web", sb: sb, host: host}
+	if err := v.SyncBack(context.Background(), ""); err != nil {
+		t.Fatal(err)
+	}
+	if len(applies) != 1 || strings.Join(applies[0].args, " ") != "git apply --whitespace=nowarn --directory=packages/web" {
+		t.Errorf("a target inside a repository must apply with its prefix, got %+v", applies)
+	}
+	if sb.execs[1].command != daytonaGit+" commit -q -m 'sweeper: after workspace'" {
+		t.Errorf("an empty hostPath should be labelled workspace, got %q", sb.execs[1].command)
+	}
+}
+
+func TestDaytonaRelativeDirPaths(t *testing.T) {
+	// A relative Dir cannot be related to an absolute path; fall back
+	// rather than guess.
+	v := &DaytonaSandbox{Dir: "rel/proj"}
 	if got := v.WorkspacePath("/abs/x.go"); got != "/abs/x.go" {
 		t.Errorf("WorkspacePath should return the input when Rel fails, got %q", got)
 	}
@@ -560,13 +582,18 @@ func TestPackWorkspaceErrors(t *testing.T) {
 	bad := func(ctx context.Context, dir string, stdin []byte, name string, args ...string) ([]byte, error) {
 		return []byte("fatal: not a git repository"), fmt.Errorf("exit 128")
 	}
-	if _, err := packWorkspace(ctx, dir, bad); err == nil || !strings.Contains(err.Error(), "not a git repository") {
-		t.Errorf("expected ls-files error, got %v", err)
+	if _, err := io.ReadAll(packWorkspace(ctx, dir, bad)); err == nil || !strings.Contains(err.Error(), "not a git repository") {
+		t.Errorf("expected ls-files error from the stream, got %v", err)
 	}
 	// A listed path under a regular file: Lstat fails with something other
 	// than not-exist, and the packer must say so rather than skip it.
-	if _, err := packWorkspace(ctx, dir, recordingHost(&calls, "f.txt/child\x00", nil)); err == nil {
+	if _, err := io.ReadAll(packWorkspace(ctx, dir, recordingHost(&calls, "f.txt/child\x00", nil))); err == nil {
 		t.Error("expected an Lstat error for a path under a file")
+	}
+	// A reader closed early must not strand the packer.
+	early := packWorkspace(ctx, dir, recordingHost(&calls, "f.txt\x00", nil))
+	if err := early.Close(); err != nil {
+		t.Fatal(err)
 	}
 	// An unreadable file.
 	if os.Getuid() != 0 {
@@ -574,7 +601,7 @@ func TestPackWorkspaceErrors(t *testing.T) {
 		if err := os.WriteFile(locked, []byte("x"), 0o000); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := packWorkspace(ctx, dir, recordingHost(&calls, "locked.txt\x00", nil)); err == nil {
+		if _, err := io.ReadAll(packWorkspace(ctx, dir, recordingHost(&calls, "locked.txt\x00", nil))); err == nil {
 			t.Error("expected an open error for an unreadable file")
 		}
 	}
@@ -614,11 +641,7 @@ func TestPackWorkspaceSkipsDirectories(t *testing.T) {
 		t.Fatal(err)
 	}
 	var calls []hostCall
-	r, err := packWorkspace(context.Background(), dir, recordingHost(&calls, "vendor-sub\x00", nil))
-	if err != nil {
-		t.Fatal(err)
-	}
-	gz, err := gzip.NewReader(r)
+	gz, err := gzip.NewReader(packWorkspace(context.Background(), dir, recordingHost(&calls, "vendor-sub\x00", nil)))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -39,13 +39,14 @@ const (
 	// Shutdown runs still does not leak a billed sandbox.
 	daytonaAutoStopMinutes = 60
 	// daytonaTTLMinutes caps a sandbox's wall-clock life regardless of
-	// activity. The sweep itself is bounded by --max-rounds; this is the
-	// backstop behind that.
-	daytonaTTLMinutes = 240
+	// activity: a backstop behind the idle stop, not a budget for the
+	// sweep, so it is set well past any sweep --max-rounds should allow.
+	daytonaTTLMinutes = 12 * 60
 )
 
-// daytonaInit mirrors smolInit: a custom snapshot may lack claude.
-const daytonaInit = "command -v claude >/dev/null || npm install -g --silent @anthropic-ai/claude-code"
+// daytonaInit is the same install step smol runs: a custom snapshot may
+// lack claude.
+const daytonaInit = smolInit
 
 // daytonaGit is the identity for the in-sandbox baseline and per-task
 // commits. Those commits exist so a later task's patch is only its own
@@ -56,6 +57,8 @@ const daytonaGit = "git -c user.name=sweeper -c user.email=sweeper@localhost"
 // satisfies it with the real SDK; tests substitute a fake.
 type sandboxAPI interface {
 	ID() string
+	// Start brings a stopped sandbox up; a no-op when already running.
+	Start(ctx context.Context) error
 	// Exec runs command through the sandbox shell in cwd and returns its
 	// exit code and combined output.
 	Exec(ctx context.Context, command, cwd string) (exitCode int, output string, err error)
@@ -116,6 +119,11 @@ func bootDaytona(name, hostDir, snapshot, initCmd string, client sandboxClient, 
 		return nil, fmt.Errorf("the daytona VM backend needs ANTHROPIC_API_KEY on the host; it is injected into the sandbox environment")
 	}
 	ctx := context.Background()
+	// Fail on an unpackable target (not a git checkout) before a sandbox
+	// exists to be billed for it.
+	if err := checkWorkspace(ctx, hostDir, host); err != nil {
+		return nil, err
+	}
 	sb, err := client.Create(ctx, daytonaCreateParams(name, snapshot, key))
 	if err != nil {
 		return nil, fmt.Errorf("daytona sandbox create failed: %w", err)
@@ -174,6 +182,10 @@ func attachDaytona(name, hostDir, initCmd string, client sandboxClient, host hos
 	if err != nil {
 		return nil, fmt.Errorf("daytona sandbox %q: %w", name, err)
 	}
+	// An attached sandbox may have been auto-stopped since it was created.
+	if err := sb.Start(ctx); err != nil {
+		return nil, fmt.Errorf("starting daytona sandbox %q: %w", name, err)
+	}
 	v := &DaytonaSandbox{Name: sb.ID(), Dir: hostDir, Managed: false, sb: sb, host: host}
 	if err := v.populate(ctx, initCmd); err != nil {
 		return nil, err
@@ -182,8 +194,10 @@ func attachDaytona(name, hostDir, initCmd string, client sandboxClient, host hos
 }
 
 // daytonaUnpack lays the uploaded archive out as the workspace and commits
-// it as the baseline every SyncBack diffs against. The workspace is cleared
-// first so an attached sandbox does not keep files from a previous sweep.
+// it as the baseline every SyncBack diffs against. The add is forced so a
+// host file that is tracked despite matching .gitignore stays in the
+// baseline. The workspace is cleared first so an attached sandbox does not
+// keep files from a previous sweep.
 var daytonaUnpack = strings.Join([]string{
 	"set -e",
 	"mkdir -p " + DaytonaWorkspace + " 2>/dev/null || { sudo mkdir -p " + DaytonaWorkspace + " && sudo chown \"$(id -u):$(id -g)\" " + DaytonaWorkspace + "; }",
@@ -192,16 +206,16 @@ var daytonaUnpack = strings.Join([]string{
 	"rm -f " + daytonaArchive,
 	"cd " + DaytonaWorkspace,
 	"git init -q",
-	"git add -A",
+	"git add -A -f",
 	daytonaGit + " commit -q --allow-empty -m 'sweeper: workspace baseline'",
 }, "; ")
 
 func (v *DaytonaSandbox) populate(ctx context.Context, initCmd string) error {
-	archive, err := packWorkspace(ctx, v.Dir, v.host)
+	archive := packWorkspace(ctx, v.Dir, v.host)
+	err := v.sb.Upload(ctx, archive, daytonaArchive)
+	// Closing the reader releases the packer if the upload stopped early.
+	_ = archive.Close()
 	if err != nil {
-		return fmt.Errorf("packing workspace: %w", err)
-	}
-	if err := v.sb.Upload(ctx, archive, daytonaArchive); err != nil {
 		return fmt.Errorf("uploading workspace: %w", err)
 	}
 	if _, err := v.run(ctx, daytonaUnpack, "/"); err != nil {
@@ -218,34 +232,66 @@ func (v *DaytonaSandbox) populate(ctx context.Context, initCmd string) error {
 	return nil
 }
 
-// run executes a shell command in the sandbox and folds a non-zero exit into
-// the error, with the output attached, matching CombinedOutput semantics.
-func (v *DaytonaSandbox) run(ctx context.Context, command, cwd string) (string, error) {
+// exec runs a shell command in the sandbox and folds a non-zero exit into
+// the error, matching CombinedOutput: the output comes back separately.
+func (v *DaytonaSandbox) exec(ctx context.Context, command, cwd string) (string, error) {
 	code, out, err := v.sb.Exec(ctx, command, cwd)
 	if err != nil {
-		return out, fmt.Errorf("daytona exec: %w\n%s", err, out)
+		return out, fmt.Errorf("daytona exec: %w", err)
 	}
 	if code != 0 {
-		return out, fmt.Errorf("exit status %d\n%s", code, out)
+		return out, fmt.Errorf("exit status %d", code)
 	}
 	return out, nil
 }
 
-// packWorkspace tars the tracked and untracked-but-not-ignored files of dir,
-// as git sees them. .git itself stays home; the sandbox gets its own baseline
-// commit instead, so node_modules, build output and history never upload.
-func packWorkspace(ctx context.Context, dir string, host hostRunner) (io.Reader, error) {
-	var buf bytes.Buffer
-	if err := packWorkspaceTo(ctx, &buf, dir, host); err != nil {
-		return nil, err
+// run is exec for sweeper's own setup and sync commands, whose output is
+// otherwise discarded, so it is attached to the error.
+func (v *DaytonaSandbox) run(ctx context.Context, command, cwd string) (string, error) {
+	out, err := v.exec(ctx, command, cwd)
+	if err != nil {
+		return out, fmt.Errorf("%w\n%s", err, out)
 	}
-	return &buf, nil
+	return out, nil
+}
+
+// lsFiles lists the files git would archive: tracked plus untracked, minus
+// ignored, NUL-separated.
+func lsFiles(ctx context.Context, dir string, host hostRunner) ([]byte, error) {
+	out, err := host(ctx, dir, nil, "git", "ls-files", "-z", "--cached", "--others", "--exclude-standard")
+	if err != nil {
+		return nil, fmt.Errorf("git ls-files in %s: %w\n%s", dir, err, out)
+	}
+	return out, nil
+}
+
+// checkWorkspace verifies the target dir can be packed. The daytona backend
+// needs the target to be a git checkout: that is what decides which files
+// travel and what a patch applies to.
+func checkWorkspace(ctx context.Context, dir string, host hostRunner) error {
+	if _, err := lsFiles(ctx, dir, host); err != nil {
+		return fmt.Errorf("the daytona backend needs the target dir to be a git checkout: %w", err)
+	}
+	return nil
+}
+
+// packWorkspace streams a gzipped tar of the tracked and untracked-but-not-
+// ignored files of dir, as git sees them. .git itself stays home; the
+// sandbox gets its own baseline commit instead, so node_modules, build
+// output and history never upload. Packing errors surface from the reader,
+// so the uploader reports them; closing the reader stops the packer.
+func packWorkspace(ctx context.Context, dir string, host hostRunner) io.ReadCloser {
+	pr, pw := io.Pipe()
+	go func() {
+		pw.CloseWithError(packWorkspaceTo(ctx, pw, dir, host))
+	}()
+	return pr
 }
 
 func packWorkspaceTo(ctx context.Context, w io.Writer, dir string, host hostRunner) error {
-	out, err := host(ctx, dir, nil, "git", "ls-files", "-z", "--cached", "--others", "--exclude-standard")
+	out, err := lsFiles(ctx, dir, host)
 	if err != nil {
-		return fmt.Errorf("git ls-files in %s: %w\n%s", dir, err, out)
+		return err
 	}
 	gz := gzip.NewWriter(w)
 	tw := tar.NewWriter(gz)
@@ -302,56 +348,56 @@ func addToTar(tw *tar.Writer, dir, rel string) error {
 
 // Exec runs a command in the sandbox workspace.
 func (v *DaytonaSandbox) Exec(ctx context.Context, args ...string) ([]byte, error) {
-	out, err := v.run(ctx, shellJoin(args), DaytonaWorkspace)
+	out, err := v.exec(ctx, shellJoin(args), DaytonaWorkspace)
 	return []byte(out), err
 }
 
-// SyncBack pulls the sandbox's changes to one file (a path relative to the
-// target dir, or absolute under it) onto the host, then commits them in the
-// sandbox so the next sync of that file carries only new work. An empty
-// hostPath syncs the whole workspace. A change the host cannot apply is an
-// error: the task is then reported failed rather than silently lost.
+// SyncBack pulls every change in the sandbox workspace onto the host and
+// commits it in the sandbox as the new baseline. It is whole-tree, not
+// per-file: an agent fixing one file routinely touches its callers too, and
+// a change that only reached the sandbox would leave the two trees apart
+// for the rest of the sweep. hostPath names the task that finished, for
+// messages. A change the host cannot apply is an error: the task is then
+// reported failed rather than silently lost.
 func (v *DaytonaSandbox) SyncBack(ctx context.Context, hostPath string) error {
-	spec, err := v.pathspec(hostPath)
-	if err != nil {
-		return err
+	label := hostPath
+	if label == "" {
+		label = "workspace"
 	}
 	v.syncMu.Lock()
 	defer v.syncMu.Unlock()
-	q := shellQuote(spec)
-	diff, err := v.run(ctx, "git add -A -- "+q+" && git diff --cached --binary -- "+q, DaytonaWorkspace)
+	// Stage, diff the index, then commit the index rather than the working
+	// tree: an agent still running may edit a staged file between the diff
+	// and the commit, and that edit must stay pending for the next sync.
+	diff, err := v.run(ctx, "git add -A -f && git diff --cached --binary", DaytonaWorkspace)
 	if err != nil {
-		return fmt.Errorf("collecting sandbox changes for %s: %w", spec, err)
+		return fmt.Errorf("collecting sandbox changes after %s: %w", label, err)
 	}
 	if strings.TrimSpace(diff) == "" {
 		return nil
 	}
-	if out, err := v.host(ctx, v.Dir, []byte(diff), "git", "apply", "--whitespace=nowarn"); err != nil {
-		return fmt.Errorf("applying sandbox changes for %s on host: %w\n%s", spec, err, out)
+	if out, err := v.host(ctx, v.Dir, []byte(diff), "git", v.applyArgs(ctx)...); err != nil {
+		return fmt.Errorf("applying sandbox changes after %s on host: %w\n%s", label, err, out)
 	}
-	if _, err := v.run(ctx, daytonaGit+" commit -q -m "+shellQuote("sweeper: "+spec)+" -- "+q, DaytonaWorkspace); err != nil {
-		return fmt.Errorf("recording synced changes for %s: %w", spec, err)
+	if _, err := v.run(ctx, daytonaGit+" commit -q -m "+shellQuote("sweeper: after "+label), DaytonaWorkspace); err != nil {
+		return fmt.Errorf("recording synced changes after %s: %w", label, err)
 	}
 	return nil
 }
 
-func (v *DaytonaSandbox) pathspec(hostPath string) (string, error) {
-	if hostPath == "" {
-		return ".", nil
-	}
-	rel := hostPath
-	if filepath.IsAbs(hostPath) {
-		r, err := filepath.Rel(v.Dir, hostPath)
-		if err != nil {
-			return "", err
+// applyArgs builds the host-side git apply. Patch paths are relative to the
+// target dir, but when that dir sits inside a larger repository git apply
+// resolves paths from the repository root, so the subdirectory prefix is
+// prepended. Outside any repository git apply behaves like patch and the
+// paths are already right.
+func (v *DaytonaSandbox) applyArgs(ctx context.Context) []string {
+	args := []string{"apply", "--whitespace=nowarn"}
+	if out, err := v.host(ctx, v.Dir, nil, "git", "rev-parse", "--show-prefix"); err == nil {
+		if prefix := strings.TrimSpace(string(out)); prefix != "" {
+			args = append(args, "--directory="+strings.TrimSuffix(prefix, "/"))
 		}
-		rel = r
 	}
-	rel = filepath.Clean(rel)
-	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		return "", fmt.Errorf("%s is outside the target dir %s", hostPath, v.Dir)
-	}
-	return filepath.ToSlash(rel), nil
+	return args
 }
 
 // Shutdown deletes a managed sandbox. No-op for attached sandboxes.
