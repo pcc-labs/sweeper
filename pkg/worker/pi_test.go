@@ -82,3 +82,36 @@ func TestPiExecutorInheritsEnvironment(t *testing.T) {
 		t.Errorf("expected pi to inherit provider credentials from env, got: %s", result.Output)
 	}
 }
+
+func TestPiExecutorBuildsPromptWhenEmpty(t *testing.T) {
+	fakePi(t)
+
+	task := Task{ID: 0, File: "test.go", Dir: t.TempDir()}
+	result := NewPiExecutor(PiConfig{})(context.Background(), task)
+	if !result.Success {
+		t.Fatalf("expected success, got error: %s", result.Error)
+	}
+	if !strings.Contains(result.Output, "Fix the following lint issues in test.go") {
+		t.Errorf("expected a prompt built from the task, got: %s", result.Output)
+	}
+}
+
+func TestPiExecutorReportsFailure(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "pi"), []byte("#!/bin/sh\necho boom; exit 3"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir)
+
+	task := Task{ID: 0, File: "test.go", Dir: t.TempDir(), Prompt: "fix it"}
+	result := NewPiExecutor(PiConfig{Model: "m"})(context.Background(), task)
+	if result.Success {
+		t.Fatal("expected failure when pi exits non-zero")
+	}
+	if !strings.Contains(result.Output, "boom") || result.Error == "" {
+		t.Errorf("expected output and error recorded, got %+v", result)
+	}
+	if result.Provider != "pi" || result.Model != "m" {
+		t.Errorf("expected provider/model on failure result, got %q/%q", result.Provider, result.Model)
+	}
+}

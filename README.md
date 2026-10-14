@@ -317,7 +317,7 @@ npx skills add papercomputeco/skills
 
 ## VM Isolation
 
-Sub-agents can run inside ephemeral virtual machines: [stereOS](https://stereos.ai) VMs managed by the `mb` (Masterblaster) CLI by default, or [smolvm](https://github.com/smol-machines/smolvm) microVMs with `--vm-backend smol`. This is what makes high concurrency safe.
+Sub-agents can run inside ephemeral virtual machines: [stereOS](https://stereos.ai) VMs managed by the `mb` (Masterblaster) CLI by default, [smolvm](https://github.com/smol-machines/smolvm) microVMs with `--vm-backend smol`, or [Daytona](https://www.daytona.io) cloud sandboxes with `--vm-backend daytona`. This is what makes high concurrency safe, and the Daytona backend is what takes the sweep off your laptop.
 
 Without VMs, sub-agents share the host process, filesystem, and API keys. At low concurrency (2-3) this works fine. At higher concurrency, you want each agent isolated so a runaway process or leaked credential stays contained.
 
@@ -344,31 +344,65 @@ agent's restricted PATH; `pi` lands with [stereOS #38](https://github.com/paperc
 Sweeper only dispatches `claude` inside the VM today (see below), so the rest
 are along for the ride.
 
-### Backends: stereOS or smolvm
+### Backends: stereOS, smolvm or Daytona
 
 `--vm` boots stereOS by default. `--vm-backend smol` boots a
-[smolvm](https://github.com/smol-machines/smolvm) microVM instead. Either flag
-implies `--vm`, and `[vm] backend = "smol"` sets it in config.
+[smolvm](https://github.com/smol-machines/smolvm) microVM instead, and
+`--vm-backend daytona` creates a [Daytona](https://www.daytona.io) sandbox.
+Any of these flags implies `--vm`, and `[vm] backend = "..."` sets it in config.
 
 ```bash
 sweeper run --vm-backend smol -c 5 -- npm run lint          # smolvm, default image
 sweeper run --vm-backend smol --vm-image ghcr.io/acme/agent:1 -- npm run lint
 sweeper run --vm-backend smol --vm-name my-smol -- npm run lint   # attach, no teardown
+sweeper run --vm-backend daytona -c 5 --vm-init "npm ci" -- npm run lint   # cloud sandbox
 ```
 
-| | stereOS (`stereos`) | smolvm (`smol`) |
-|---|---|---|
-| Host CLI | `mb` | `smolvm` |
-| Guest | `coder` mixtape, claude preinstalled | any OCI image; claude installed on start if missing |
-| API key | written into the VM's jcard | never enters the VM; the guest gets a placeholder and smolvm substitutes the real key on HTTPS to api.anthropic.com |
-| Workspace | target dir shared at `/workspace` | target dir mounted at `/workspace` |
-| Custom config | `--vm-jcard` | `--vm-image` |
+| | stereOS (`stereos`) | smolvm (`smol`) | Daytona (`daytona`) |
+|---|---|---|---|
+| Host needs | `mb` CLI | `smolvm` CLI | `DAYTONA_API_KEY` |
+| Guest | `coder` mixtape, claude preinstalled | any OCI image; claude installed on start if missing | any snapshot; `daytona-medium` by default, claude preinstalled |
+| API key | written into the VM's jcard | never enters the VM; the guest gets a placeholder and smolvm substitutes the real key on HTTPS to api.anthropic.com | injected as a sandbox env var at create |
+| Workspace | target dir shared at `/workspace` | target dir mounted at `/workspace` | target dir uploaded to `/workspace`; each task's changes pulled back as a patch |
+| Custom config | `--vm-jcard` | `--vm-image` | `--vm-image` (snapshot), `--vm-init` |
 
 The smol backend needs `ANTHROPIC_API_KEY` set on the host. The default image
 is `node:22-bookworm-slim`, which runs `npm install -g @anthropic-ai/claude-code`
 on each boot, about 15 seconds. Pass `--vm-image` with claude baked in to skip
 that. The guest runs as root with `IS_SANDBOX=1`, which `claude
 --dangerously-skip-permissions` requires as root.
+
+### Daytona: the sweep off your laptop
+
+The two local backends share the target dir with the guest, so the host sees
+every edit as it happens. A Daytona sandbox runs remotely and shares nothing,
+so the backend moves the tree itself:
+
+1. **Upload.** The files `git ls-files` reports (tracked plus untracked, minus
+   ignored) are tarred and uploaded; `.git`, `node_modules` and build output
+   stay home. The sandbox commits that tree as its baseline.
+2. **Init.** claude is installed if the snapshot lacks it, then `--vm-init`
+   runs in the workspace. Use it for the target's own toolchain (`npm ci`,
+   `go mod download`), or bake a snapshot with `daytona snapshot create` and
+   pass it as `--vm-image` to skip the install on every run.
+3. **Sync back.** After each task the sandbox's diff for that file is applied
+   on the host with `git apply`, then committed in the sandbox so the next
+   round's patch carries only new work. A patch the host cannot apply fails
+   the task instead of being dropped, and the sandbox tree is cleared on
+   reuse so an attached sandbox never leaks files between sweeps.
+4. **Teardown.** The sandbox is deleted on exit. It is also created ephemeral
+   with a one-hour idle stop and a four-hour TTL, so a host that dies before
+   teardown does not leave a billed sandbox behind.
+
+Sandboxes have no Claude login, so `ANTHROPIC_API_KEY` must be set on the host.
+If `ANTHROPIC_BASE_URL` is set too, it is forwarded into the sandbox. Point it
+at a [tapes](https://tapes.dev) proxy the sandboxes can reach and every agent
+exchange lands in a store that outlives the sandbox, which is the point of
+running the sweep there in the first place.
+
+Daytona's own CLI is not needed; the backend talks to the API through the Go
+SDK. `--vm-name` attaches to an existing sandbox by ID or name, re-uploads the
+tree, and leaves the sandbox running on exit.
 
 ### Why VM workers are claude-only
 
