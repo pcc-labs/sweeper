@@ -137,6 +137,8 @@ func TestFromTOMLVMFields(t *testing.T) {
 	tc.VM.Enabled = true
 	tc.VM.Name = "myvm"
 	tc.VM.Jcard = "/path/to/jcard.toml"
+	tc.VM.Backend = "smol"
+	tc.VM.Image = "node:22-bookworm-slim"
 	tc.Provider.Model = "gpt-4"
 	tc.Provider.APIBase = "https://api.example.com"
 	tc.Run.DryRun = true
@@ -151,6 +153,12 @@ func TestFromTOMLVMFields(t *testing.T) {
 	}
 	if cfg.VMJcard != "/path/to/jcard.toml" {
 		t.Errorf("expected VMJcard /path/to/jcard.toml, got %s", cfg.VMJcard)
+	}
+	if cfg.VMBackend != "smol" {
+		t.Errorf("expected VMBackend smol, got %s", cfg.VMBackend)
+	}
+	if cfg.VMImage != "node:22-bookworm-slim" {
+		t.Errorf("expected VMImage, got %s", cfg.VMImage)
 	}
 	if cfg.ProviderModel != "gpt-4" {
 		t.Errorf("expected ProviderModel gpt-4, got %s", cfg.ProviderModel)

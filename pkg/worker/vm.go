@@ -15,7 +15,8 @@ type VMExecConfig struct {
 	Model string // e.g. "claude-haiku-4-5"; empty uses the CLI's default
 }
 
-// NewVMExecutor returns an Executor that runs claude inside a stereOS VM.
+// NewVMExecutor returns an Executor that runs claude inside a sub-agent VM
+// on any backend (stereOS or smolvm).
 func NewVMExecutor(vm VMExecer, cfg VMExecConfig) Executor {
 	return func(ctx context.Context, task Task) Result {
 		start := time.Now()
