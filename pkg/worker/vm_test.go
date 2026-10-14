@@ -116,3 +116,50 @@ func TestNewVMExecutorOmitsModelFlagWhenEmpty(t *testing.T) {
 		}
 	}
 }
+
+type fakeSyncVM struct {
+	fakeVM
+	synced []string
+	err    error
+}
+
+func (f *fakeSyncVM) SyncBack(ctx context.Context, hostPath string) error {
+	f.synced = append(f.synced, hostPath)
+	return f.err
+}
+
+func TestNewVMExecutorSyncsBackAfterSuccess(t *testing.T) {
+	vm := &fakeSyncVM{fakeVM: fakeVM{execFunc: func(ctx context.Context, args ...string) ([]byte, error) {
+		return []byte("fixed"), nil
+	}}}
+	result := NewVMExecutor(vm, VMExecConfig{})(context.Background(), Task{ID: 1, File: "src/a.go", Dir: "/host", Prompt: "fix"})
+	if !result.Success {
+		t.Fatalf("expected success, got %s", result.Error)
+	}
+	if len(vm.synced) != 1 || vm.synced[0] != "src/a.go" {
+		t.Errorf("expected the task file to be synced back once, got %v", vm.synced)
+	}
+}
+
+func TestNewVMExecutorSyncFailureFailsTask(t *testing.T) {
+	vm := &fakeSyncVM{fakeVM: fakeVM{execFunc: func(ctx context.Context, args ...string) ([]byte, error) {
+		return []byte("fixed"), nil
+	}}, err: fmt.Errorf("patch does not apply")}
+	result := NewVMExecutor(vm, VMExecConfig{})(context.Background(), Task{ID: 1, File: "a.go", Prompt: "fix"})
+	if result.Success {
+		t.Fatal("a task whose changes never reached the host must not count as fixed")
+	}
+	if result.Output != "fixed" || result.Error == "" {
+		t.Errorf("expected agent output kept and sync error reported, got %+v", result)
+	}
+}
+
+func TestNewVMExecutorSkipsSyncAfterFailure(t *testing.T) {
+	vm := &fakeSyncVM{fakeVM: fakeVM{execFunc: func(ctx context.Context, args ...string) ([]byte, error) {
+		return nil, fmt.Errorf("exit 1")
+	}}}
+	NewVMExecutor(vm, VMExecConfig{})(context.Background(), Task{ID: 1, File: "a.go", Prompt: "fix"})
+	if len(vm.synced) != 0 {
+		t.Errorf("a failed run should not sync, got %v", vm.synced)
+	}
+}

@@ -30,6 +30,7 @@ func newRunCmd() *cobra.Command {
 	var vmJcard string
 	var vmBackend string
 	var vmImage string
+	var vmInit string
 	var providerName string
 	var providerModel string
 	var providerAPI string
@@ -92,6 +93,9 @@ Examples:
 			}
 			if cmd.Flags().Changed("vm-image") {
 				tc.VM.Image = vmImage
+			}
+			if cmd.Flags().Changed("vm-init") {
+				tc.VM.Init = vmInit
 			}
 			if cmd.Flags().Changed("capture") {
 				tc.Capture.Mode = captureMode
@@ -161,7 +165,7 @@ Examples:
 				))
 			}
 
-			if vmName != "" || vmJcard != "" || cmd.Flags().Changed("vm-backend") || cmd.Flags().Changed("vm-image") {
+			if vmName != "" || vmJcard != "" || cmd.Flags().Changed("vm-backend") || cmd.Flags().Changed("vm-image") || cmd.Flags().Changed("vm-init") {
 				useVM = true
 			}
 			cfg.VM = useVM
@@ -216,11 +220,11 @@ Examples:
 				if err != nil {
 					return err
 				}
-				if backend == vm.BackendSmol && cfg.VMJcard != "" {
-					return fmt.Errorf("--vm-jcard applies to the stereos backend only; the smol backend boots --vm-image")
+				if backend != vm.BackendStereOS && cfg.VMJcard != "" {
+					return fmt.Errorf("--vm-jcard applies to the stereos backend only; the %s backend boots --vm-image", backend)
 				}
-				if _, lerr := exec.LookPath(backend.Binary()); lerr != nil {
-					return fmt.Errorf("VM backend %q requires the %q CLI on PATH", backend, backend.Binary())
+				if err := backend.CheckHost(); err != nil {
+					return err
 				}
 				jcardDir := filepath.Join(absTarget, ".sweeper", "vm")
 				if cfg.VMJcard != "" {
@@ -232,6 +236,7 @@ Examples:
 					HostDir:  absTarget,
 					JcardDir: jcardDir,
 					Image:    cfg.VMImage,
+					Init:     cfg.VMInit,
 				})
 				if err != nil {
 					return fmt.Errorf("booting %s VM: %w", backend, err)
@@ -265,8 +270,9 @@ Examples:
 	cmd.Flags().IntVar(&maxRounds, "max-rounds", 1, "maximum retry rounds (1 = single pass)")
 	cmd.Flags().IntVar(&staleThreshold, "stale-threshold", 2, "consecutive non-improving rounds before exploration mode")
 	cmd.Flags().BoolVar(&useVM, "vm", false, "boot an ephemeral VM per run, teardown on exit")
-	cmd.Flags().StringVar(&vmBackend, "vm-backend", "", "VM backend: stereos (default) or smol (implies --vm)")
-	cmd.Flags().StringVar(&vmImage, "vm-image", "", "OCI image for the smol backend (default "+vm.DefaultSmolImage+", implies --vm)")
+	cmd.Flags().StringVar(&vmBackend, "vm-backend", "", "VM backend: stereos (default), smol, or daytona (implies --vm)")
+	cmd.Flags().StringVar(&vmImage, "vm-image", "", "smol: OCI image (default "+vm.DefaultSmolImage+"); daytona: snapshot (default "+vm.DefaultDaytonaSnapshot+") (implies --vm)")
+	cmd.Flags().StringVar(&vmInit, "vm-init", "", "daytona: shell command run in the sandbox workspace after boot, e.g. \"npm ci\" (implies --vm)")
 	cmd.Flags().StringVar(&vmName, "vm-name", "", "use existing VM by name (no managed lifecycle, implies --vm)")
 	cmd.Flags().StringVar(&vmJcard, "vm-jcard", "", "custom jcard.toml path, stereos backend only (implies --vm)")
 	cmd.Flags().StringVar(&providerName, "provider", "pi", "AI provider (pi, claude, codex, ollama)")

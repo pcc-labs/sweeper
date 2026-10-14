@@ -19,8 +19,10 @@ trap 'rm -f "$COVERFILE"' EXIT
 echo "Running tests with coverage..."
 go test -coverprofile="$COVERFILE" ./pkg/... > /dev/null 2>&1
 
-# Files excluded entirely (external binary integrations).
-EXCLUDED_FILES="claude.go|codex.go"
+# Files excluded entirely (external binary and API integrations).
+# daytona_sdk.go is the thin adapter over the Daytona Go SDK; the backend
+# logic behind it is tested through fakes in daytona_test.go.
+EXCLUDED_FILES="claude.go|codex.go|daytona_sdk.go"
 
 # Functions excluded from 100% check.
 # These contain defensive SQL rows.Scan/db.Ping error paths that are
@@ -31,6 +33,9 @@ EXCLUDED_FUNCTIONS=(
   "pkg/vm/vm.go:.*Boot"
   "pkg/vm/vm.go:.*Attach"
   "pkg/vm/smol.go:.*BootSmol"
+  "pkg/vm/daytona.go:.*defaultHostRunner"
+  "pkg/vm/daytona.go:.*BootDaytona"
+  "pkg/vm/daytona.go:.*AttachDaytona"
   "pkg/vm/backend.go:[0-9]+:[[:space:]]+New[[:space:]]"
   "pkg/worker/ollama.go:.*NewOllamaExecutor"
   "pkg/worker/ollama.go:.*ollamaChat"

@@ -104,7 +104,8 @@ dir = ".sweeper/telemetry"
 
 # [vm]
 # enabled = false
-# backend = "stereos"   # "stereos" (mb, default) or "smol" (smolvm microVMs)
-# name = ""             # attach to an existing VM on the chosen backend
+# backend = "stereos"   # "stereos" (mb, default), "smol" (smolvm microVMs) or "daytona" (cloud sandboxes)
+# name = ""             # attach to an existing VM/sandbox on the chosen backend
 # jcard = ""            # stereos only: custom jcard.toml
-# image = ""            # smol only: OCI image (default node:22-bookworm-slim)
+# image = ""            # smol: OCI image (default node:22-bookworm-slim); daytona: snapshot (default daytona-medium)
+# init = ""             # daytona only: setup command run in the workspace after boot, e.g. "npm ci"

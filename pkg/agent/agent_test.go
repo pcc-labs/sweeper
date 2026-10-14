@@ -1939,3 +1939,22 @@ func TestNewAgentLadderUnknownDefaultProviderDisablesLadder(t *testing.T) {
 		t.Error("expected ladder disabled when rung provider is unknown")
 	}
 }
+
+func TestNewAgentVMWarnsForNonClaudeProvider(t *testing.T) {
+	var models []string
+	cfg := config.Config{
+		TargetDir:     t.TempDir(),
+		Concurrency:   1,
+		TelemetryDir:  t.TempDir(),
+		Provider:      "pi",
+		ProviderModel: "claude-haiku-4-5",
+		VM:            true,
+	}
+	a := New(cfg, WithVMExecutorFactory(vmFactoryRecorder(&models)))
+	if a.executor == nil {
+		t.Fatal("a non-claude provider under --vm should still get a VM executor")
+	}
+	if len(models) != 1 || models[0] != "claude-haiku-4-5" {
+		t.Errorf("expected the VM factory called with the worker model, got %v", models)
+	}
+}

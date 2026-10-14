@@ -15,8 +15,9 @@ type Config struct {
 	VM                bool                // --vm: boot an ephemeral VM (backend per VMBackend)
 	VMName            string              // --vm-name: use existing VM (no managed lifecycle)
 	VMJcard           string              // --vm-jcard: custom jcard.toml path
-	VMBackend         string              // --vm-backend: stereos (default) or smol
-	VMImage           string              // --vm-image: OCI image for the smol backend
+	VMBackend         string              // --vm-backend: stereos (default), smol or daytona
+	VMImage           string              // --vm-image: OCI image (smol) or snapshot (daytona)
+	VMInit            string              // --vm-init: setup command run in the workspace after boot (daytona)
 	Provider          string              // AI provider name (e.g. "claude", "codex", "ollama")
 	ProviderModel     string              // model override for the provider
 	ProviderAPI       string              // API base URL for API-only providers
@@ -86,6 +87,7 @@ func FromTOML(tc TOMLConfig) Config {
 		VMJcard:           tc.VM.Jcard,
 		VMBackend:         tc.VM.Backend,
 		VMImage:           tc.VM.Image,
+		VMInit:            tc.VM.Init,
 		Provider:          name,
 		ProviderModel:     firstNonEmpty(tc.Worker.Model, tc.Provider.Model),
 		ProviderAPI:       firstNonEmpty(tc.Worker.APIBase, tc.Provider.APIBase, endpoints[name]),

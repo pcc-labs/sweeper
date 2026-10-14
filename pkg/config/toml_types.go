@@ -100,11 +100,15 @@ type VMSectionConfig struct {
 	Enabled bool   `toml:"enabled"`
 	Name    string `toml:"name"`
 	Jcard   string `toml:"jcard"`
-	// Backend picks the VM implementation: "stereos" (default, via mb) or
-	// "smol" (smolvm microVMs).
+	// Backend picks the VM implementation: "stereos" (default, via mb),
+	// "smol" (smolvm microVMs) or "daytona" (Daytona cloud sandboxes).
 	Backend string `toml:"backend"`
-	// Image is the OCI image the smol backend boots.
+	// Image is the OCI image the smol backend boots, or the snapshot the
+	// daytona backend creates a sandbox from.
 	Image string `toml:"image"`
+	// Init is a shell command run in the sandbox workspace after boot,
+	// e.g. "npm ci". daytona only.
+	Init string `toml:"init"`
 }
 
 func NewDefaultTOMLConfig() TOMLConfig {
@@ -160,6 +164,7 @@ var TOMLConfigKeySet = map[string]bool{
 	"vm.jcard":                            true,
 	"vm.backend":                          true,
 	"vm.image":                            true,
+	"vm.init":                             true,
 	"capture.mode":                        true,
 	"capture.tapes_proxy":                 true,
 }
